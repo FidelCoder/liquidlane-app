@@ -90,6 +90,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   width: 100%;
 }
 .role-grid { display: grid; gap: 10px; }
+.wallet-preview { background: var(--surface-soft); border: 1px solid var(--line); border-radius: 8px; color: var(--muted); min-height: 42px; padding: 10px 12px; }
 .role-card {
   border: 1px solid var(--line);
   border-radius: 8px;
