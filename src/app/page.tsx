@@ -20,9 +20,15 @@ type Role = "lp" | "merchant" | "operator";
 
 type UserProfile = {
   id: string;
-  name: string;
-  email: string;
+  display_name: string;
+  wallet_address: string;
   role: Role;
+};
+
+type ChallengeResponse = {
+  challenge_id: string;
+  message: string;
+  expires_at: string;
 };
 
 type AuthResponse = {
@@ -90,17 +96,29 @@ type Dashboard = {
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 const TOKEN_KEY = "liquidlane_token";
+const WALLET_KEY = "liquidlane_wallet";
 const roles: Array<{ value: Role; label: string; description: string }> = [
   { value: "lp", label: "Liquidity Provider", description: "Deposit stablecoins and track vault yield." },
   { value: "merchant", label: "Merchant", description: "Request receive capacity for Fiber payments." },
   { value: "operator", label: "Operator", description: "Manage both deposits and capacity deployments." },
 ];
 
+type EthereumProvider = {
+  request<T = unknown>(args: { method: string; params?: unknown[] }): Promise<T>;
+};
+
+declare global {
+  interface Window {
+    ethereum?: EthereumProvider;
+  }
+}
+
 export default function Home() {
   const [token, setToken] = useState<string | null>(null);
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [quote, setQuote] = useState<LiquidityQuote | null>(null);
-  const [status, setStatus] = useState("Sign in to start using live LiquidLane data.");
+  const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  const [status, setStatus] = useState("Connect a wallet and sign a LiquidLane challenge to continue.");
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -163,28 +181,57 @@ export default function Home() {
   async function signIn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
+    const role = form.get("role") as Role;
+    const displayName = String(form.get("display_name") ?? "").trim();
     setBusy("auth");
     try {
-      const response = await fetch(`${API_BASE}/auth/start`, {
+      if (!window.ethereum) {
+        throw new Error("No injected wallet found. Install a browser wallet to sign in.");
+      }
+      const accounts = await window.ethereum.request<string[]>({ method: "eth_requestAccounts" });
+      const wallet = accounts[0];
+      if (!wallet) {
+        throw new Error("Wallet did not return an account.");
+      }
+      setWalletAddress(wallet);
+      window.localStorage.setItem(WALLET_KEY, wallet);
+
+      const challengeResponse = await fetch(`${API_BASE}/auth/challenge`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ wallet_address: wallet, role }),
+      });
+      if (!challengeResponse.ok) {
+        const body = await challengeResponse.json().catch(() => ({ error: "Challenge failed" }));
+        throw new Error(body.error ?? "Challenge failed");
+      }
+      const challenge: ChallengeResponse = await challengeResponse.json();
+      const signature = await window.ethereum.request<string>({
+        method: "personal_sign",
+        params: [challenge.message, wallet],
+      });
+
+      const verifyResponse = await fetch(`${API_BASE}/auth/verify`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: form.get("name"),
-          email: form.get("email"),
-          role: form.get("role"),
+          challenge_id: challenge.challenge_id,
+          wallet_address: wallet,
+          signature,
+          display_name: displayName || undefined,
         }),
       });
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({ error: "Sign in failed" }));
-        throw new Error(body.error ?? "Sign in failed");
+      if (!verifyResponse.ok) {
+        const body = await verifyResponse.json().catch(() => ({ error: "Wallet verification failed" }));
+        throw new Error(body.error ?? "Wallet verification failed");
       }
-      const data: AuthResponse = await response.json();
+      const data: AuthResponse = await verifyResponse.json();
       setToken(data.token);
       window.localStorage.setItem(TOKEN_KEY, data.token);
-      setStatus(`Signed in as ${data.user.name}.`);
+      setStatus(`Wallet verified: ${shortAddress(data.user.wallet_address)}.`);
       await refresh(data.token);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Could not connect to LiquidLane Core.");
+      setStatus(error instanceof Error ? error.message : "Could not verify wallet session.");
     } finally {
       setBusy(null);
     }
@@ -192,7 +239,9 @@ export default function Home() {
 
   function signOut() {
     window.localStorage.removeItem(TOKEN_KEY);
+    window.localStorage.removeItem(WALLET_KEY);
     setToken(null);
+    setWalletAddress(null);
     setDashboard(null);
     setQuote(null);
     setStatus("Signed out.");
@@ -296,13 +345,13 @@ export default function Home() {
           <div className="auth-copy">
             <p className="eyebrow">Live product access</p>
             <h1>Operate stablecoin liquidity for Fiber channels.</h1>
-            <p className="lede">Sign in with a product role. LiquidLane only shows live backend data and will not silently load fake records.</p>
+            <p className="lede">Connect your wallet, choose a role, and sign a one-time challenge. LiquidLane only shows live backend data and will not silently load fake records.</p>
             <div className="status-strip"><RadioTower size={16} /> {status}</div>
           </div>
           <form className="auth-panel" onSubmit={signIn}>
-            <h2>Start session</h2>
-            <label>Name<input name="name" placeholder="Atlas LP" required /></label>
-            <label>Email<input name="email" type="email" placeholder="atlas@company.com" required /></label>
+            <h2>Wallet session</h2>
+            <label>Display name<input name="display_name" placeholder="Atlas LP" /></label>
+            <div className="wallet-preview">{walletAddress ? shortAddress(walletAddress) : "No wallet connected yet"}</div>
             <div className="role-grid">
               {roles.map((role) => (
                 <label key={role.value} className="role-card">
@@ -312,7 +361,7 @@ export default function Home() {
                 </label>
               ))}
             </div>
-            <button type="submit" disabled={busy === "auth"}>{busy === "auth" ? <Loader2 className="spin" size={16} /> : <UserRound size={16} />} Enter LiquidLane</button>
+            <button type="submit" disabled={busy === "auth"}>{busy === "auth" ? <Loader2 className="spin" size={16} /> : <UserRound size={16} />} Connect + sign</button>
           </form>
         </section>
       ) : (
@@ -322,7 +371,7 @@ export default function Home() {
               <p className="eyebrow">{dashboard.user.role} workspace</p>
               <h1>Liquidity capacity with live vault accounting.</h1>
               <p className="lede">Deposits, reserves, deployments, and fees are written to LiquidLane Core and persisted locally.</p>
-              <div className="status-strip"><UserRound size={16} /> {dashboard.user.name} · {dashboard.user.email}</div>
+              <div className="status-strip"><UserRound size={16} /> {dashboard.user.display_name} · {shortAddress(dashboard.user.wallet_address)}</div>
               <p className="notice">{status}</p>
             </div>
 
@@ -466,4 +515,10 @@ function money(value: number) {
     currency: "USD",
     maximumFractionDigits: 0,
   }).format(value);
+}
+
+
+function shortAddress(address: string) {
+  if (address.length < 12) return address;
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
