@@ -15,13 +15,16 @@ import {
   UserRound,
   Waves,
 } from "lucide-react";
+import { connectCkbWallet, signCkbChallenge } from "@/lib/ckbWallet";
 
 type Role = "lp" | "merchant" | "operator";
+type LiquidityStatus = "requested" | "pending_fiber_channel" | "channel_open" | "failed";
 
 type UserProfile = {
   id: string;
   display_name: string;
-  wallet_address: string;
+  ckb_address: string;
+  wallet_type: string;
   role: Role;
 };
 
@@ -40,6 +43,7 @@ type VaultSummary = {
   asset: string;
   total_deposits: number;
   reserved_liquidity: number;
+  pending_channel_liquidity: number;
   deployed_liquidity: number;
   available_liquidity: number;
   fees_earned: number;
@@ -50,6 +54,7 @@ type VaultSummary = {
 type Deposit = {
   id: string;
   lp_name: string;
+  ckb_address: string;
   asset: string;
   amount: number;
   created_at: string;
@@ -58,13 +63,18 @@ type Deposit = {
 type LiquidityRequest = {
   id: string;
   merchant_name: string;
+  ckb_address: string;
   asset: string;
   amount: number;
   duration_days: number;
   lease_fee: number;
   routing_fee_bps: number;
-  status: "requested" | "deployed";
+  fiber_peer_pubkey: string | null;
+  status: LiquidityStatus;
+  fiber_temporary_channel_id: string | null;
   channel_id: string | null;
+  fiber_note: string | null;
+  fiber_error: string | null;
   created_at: string;
 };
 
@@ -96,29 +106,19 @@ type Dashboard = {
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 const TOKEN_KEY = "liquidlane_token";
-const WALLET_KEY = "liquidlane_wallet";
+const ADDRESS_KEY = "liquidlane_ckb_address";
 const roles: Array<{ value: Role; label: string; description: string }> = [
   { value: "lp", label: "Liquidity Provider", description: "Deposit stablecoins and track vault yield." },
   { value: "merchant", label: "Merchant", description: "Request receive capacity for Fiber payments." },
-  { value: "operator", label: "Operator", description: "Manage both deposits and capacity deployments." },
+  { value: "operator", label: "Operator", description: "Manage vault liquidity and Fiber channel opens." },
 ];
-
-type EthereumProvider = {
-  request<T = unknown>(args: { method: string; params?: unknown[] }): Promise<T>;
-};
-
-declare global {
-  interface Window {
-    ethereum?: EthereumProvider;
-  }
-}
 
 export default function Home() {
   const [token, setToken] = useState<string | null>(null);
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [quote, setQuote] = useState<LiquidityQuote | null>(null);
-  const [walletAddress, setWalletAddress] = useState<string | null>(null);
-  const [status, setStatus] = useState("Connect a wallet and sign a LiquidLane challenge to continue.");
+  const [ckbAddress, setCkbAddress] = useState<string | null>(null);
+  const [status, setStatus] = useState("Connect a CKB wallet and sign a LiquidLane challenge to continue.");
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -158,7 +158,9 @@ export default function Home() {
         const data: Dashboard = await response.json();
         setDashboard(data);
         setToken(activeToken);
+        setCkbAddress(data.user.ckb_address);
         window.localStorage.setItem(TOKEN_KEY, activeToken);
+        window.localStorage.setItem(ADDRESS_KEY, data.user.ckb_address);
         setStatus("Connected to LiquidLane Core.");
       } catch (error) {
         setDashboard(null);
@@ -171,10 +173,12 @@ export default function Home() {
   );
 
   useEffect(() => {
-    const saved = window.localStorage.getItem(TOKEN_KEY);
-    if (saved) {
-      setToken(saved);
-      refresh(saved);
+    const savedToken = window.localStorage.getItem(TOKEN_KEY);
+    const savedAddress = window.localStorage.getItem(ADDRESS_KEY);
+    if (savedAddress) setCkbAddress(savedAddress);
+    if (savedToken) {
+      setToken(savedToken);
+      refresh(savedToken);
     }
   }, [refresh]);
 
@@ -185,53 +189,51 @@ export default function Home() {
     const displayName = String(form.get("display_name") ?? "").trim();
     setBusy("auth");
     try {
-      if (!window.ethereum) {
-        throw new Error("No injected wallet found. Install a browser wallet to sign in.");
-      }
-      const accounts = await window.ethereum.request<string[]>({ method: "eth_requestAccounts" });
-      const wallet = accounts[0];
-      if (!wallet) {
-        throw new Error("Wallet did not return an account.");
-      }
-      setWalletAddress(wallet);
-      window.localStorage.setItem(WALLET_KEY, wallet);
+      const wallet = await connectCkbWallet();
+      setCkbAddress(wallet.ckbAddress);
+      window.localStorage.setItem(ADDRESS_KEY, wallet.ckbAddress);
 
       const challengeResponse = await fetch(`${API_BASE}/auth/challenge`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ wallet_address: wallet, role }),
+        body: JSON.stringify({
+          ckb_address: wallet.ckbAddress,
+          wallet_type: wallet.walletType,
+          role,
+        }),
       });
       if (!challengeResponse.ok) {
         const body = await challengeResponse.json().catch(() => ({ error: "Challenge failed" }));
         throw new Error(body.error ?? "Challenge failed");
       }
       const challenge: ChallengeResponse = await challengeResponse.json();
-      const signature = await window.ethereum.request<string>({
-        method: "personal_sign",
-        params: [challenge.message, wallet],
-      });
+      const proof = await signCkbChallenge(challenge.message, wallet);
 
       const verifyResponse = await fetch(`${API_BASE}/auth/verify`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           challenge_id: challenge.challenge_id,
-          wallet_address: wallet,
-          signature,
+          ckb_address: proof.ckbAddress,
+          wallet_type: proof.walletType,
+          signature: proof.signature,
+          lock_script: proof.lockScript,
           display_name: displayName || undefined,
         }),
       });
       if (!verifyResponse.ok) {
-        const body = await verifyResponse.json().catch(() => ({ error: "Wallet verification failed" }));
-        throw new Error(body.error ?? "Wallet verification failed");
+        const body = await verifyResponse.json().catch(() => ({ error: "CKB wallet verification failed" }));
+        throw new Error(body.error ?? "CKB wallet verification failed");
       }
       const data: AuthResponse = await verifyResponse.json();
       setToken(data.token);
+      setCkbAddress(data.user.ckb_address);
       window.localStorage.setItem(TOKEN_KEY, data.token);
-      setStatus(`Wallet verified: ${shortAddress(data.user.wallet_address)}.`);
+      window.localStorage.setItem(ADDRESS_KEY, data.user.ckb_address);
+      setStatus(`CKB wallet verified: ${shortAddress(data.user.ckb_address)}.`);
       await refresh(data.token);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Could not verify wallet session.");
+      setStatus(error instanceof Error ? error.message : "Could not verify CKB wallet session.");
     } finally {
       setBusy(null);
     }
@@ -239,9 +241,9 @@ export default function Home() {
 
   function signOut() {
     window.localStorage.removeItem(TOKEN_KEY);
-    window.localStorage.removeItem(WALLET_KEY);
+    window.localStorage.removeItem(ADDRESS_KEY);
     setToken(null);
-    setWalletAddress(null);
+    setCkbAddress(null);
     setDashboard(null);
     setQuote(null);
     setStatus("Signed out.");
@@ -260,7 +262,7 @@ export default function Home() {
         }),
       });
       event.currentTarget.reset();
-      setStatus("Liquidity deposit recorded.");
+      setStatus("Vault liquidity recorded.");
       await refresh();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Deposit failed.");
@@ -276,6 +278,7 @@ export default function Home() {
       asset: form.get("asset"),
       amount: Number(form.get("amount")),
       duration_days: Number(form.get("duration_days")),
+      fiber_peer_pubkey: blankToUndefined(form.get("fiber_peer_pubkey")),
     };
     setBusy("request");
     try {
@@ -293,7 +296,7 @@ export default function Home() {
         body: JSON.stringify(payload),
       });
       event.currentTarget.reset();
-      setStatus("Capacity request reserved.");
+      setStatus("Capacity reserved. Open the Fiber channel when the peer is ready.");
       await refresh();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Capacity request failed.");
@@ -302,14 +305,14 @@ export default function Home() {
     }
   }
 
-  async function deploy(id: string) {
+  async function openFiberChannel(id: string) {
     setBusy(id);
     try {
-      await request<LiquidityRequest>(`/liquidity/requests/${id}/deploy`, { method: "POST" });
-      setStatus("Fiber channel capacity deployed.");
+      const updated = await request<LiquidityRequest>(`/liquidity/requests/${id}/deploy`, { method: "POST" });
+      setStatus(statusMessage(updated));
       await refresh();
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Deployment failed.");
+      setStatus(error instanceof Error ? error.message : "Fiber channel open failed.");
     } finally {
       setBusy(null);
     }
@@ -318,7 +321,8 @@ export default function Home() {
   const vault = dashboard?.vault;
   const utilization = useMemo(() => {
     if (!vault || vault.total_deposits === 0) return 0;
-    return Math.round(((vault.reserved_liquidity + vault.deployed_liquidity) / vault.total_deposits) * 100);
+    const used = vault.reserved_liquidity + vault.pending_channel_liquidity + vault.deployed_liquidity;
+    return Math.round((used / vault.total_deposits) * 100);
   }, [vault]);
   const canDeposit = dashboard?.user.role === "lp" || dashboard?.user.role === "operator";
   const canRequest = dashboard?.user.role === "merchant" || dashboard?.user.role === "operator";
@@ -343,15 +347,15 @@ export default function Home() {
       {!dashboard ? (
         <section className="auth-layout">
           <div className="auth-copy">
-            <p className="eyebrow">Live product access</p>
+            <p className="eyebrow">Fiber native access</p>
             <h1>Operate stablecoin liquidity for Fiber channels.</h1>
-            <p className="lede">Connect your wallet, choose a role, and sign a one-time challenge. LiquidLane only shows live backend data and will not silently load fake records.</p>
+            <p className="lede">Connect JoyID on CKB, sign a LiquidLane challenge, and work with live Fiber channel state from Core.</p>
             <div className="status-strip"><RadioTower size={16} /> {status}</div>
           </div>
           <form className="auth-panel" onSubmit={signIn}>
-            <h2>Wallet session</h2>
+            <h2>CKB wallet session</h2>
             <label>Display name<input name="display_name" placeholder="Atlas LP" /></label>
-            <div className="wallet-preview">{walletAddress ? shortAddress(walletAddress) : "No wallet connected yet"}</div>
+            <div className="wallet-preview">{ckbAddress ? shortAddress(ckbAddress) : "No CKB wallet connected yet"}</div>
             <div className="role-grid">
               {roles.map((role) => (
                 <label key={role.value} className="role-card">
@@ -361,7 +365,7 @@ export default function Home() {
                 </label>
               ))}
             </div>
-            <button type="submit" disabled={busy === "auth"}>{busy === "auth" ? <Loader2 className="spin" size={16} /> : <UserRound size={16} />} Connect + sign</button>
+            <button type="submit" disabled={busy === "auth"}>{busy === "auth" ? <Loader2 className="spin" size={16} /> : <UserRound size={16} />} Connect JoyID</button>
           </form>
         </section>
       ) : (
@@ -369,9 +373,9 @@ export default function Home() {
           <section className="hero dashboard-hero">
             <div className="hero-copy">
               <p className="eyebrow">{dashboard.user.role} workspace</p>
-              <h1>Liquidity capacity with live vault accounting.</h1>
-              <p className="lede">Deposits, reserves, deployments, and fees are written to LiquidLane Core and persisted locally.</p>
-              <div className="status-strip"><UserRound size={16} /> {dashboard.user.display_name} · {shortAddress(dashboard.user.wallet_address)}</div>
+              <h1>Fiber capacity with live vault accounting.</h1>
+              <p className="lede">LiquidLane reserves vault liquidity, queues Fiber channel opens, and only marks capacity open when Core has a real channel state.</p>
+              <div className="status-strip"><UserRound size={16} /> {dashboard.user.display_name} · {shortAddress(dashboard.user.ckb_address)}</div>
               <p className="notice">{status}</p>
             </div>
 
@@ -385,8 +389,8 @@ export default function Home() {
                 <Metric label="Total deposits" value={money(vault?.total_deposits ?? 0)} />
                 <Metric label="Available" value={money(vault?.available_liquidity ?? 0)} />
                 <Metric label="Reserved" value={money(vault?.reserved_liquidity ?? 0)} />
-                <Metric label="Deployed" value={money(vault?.deployed_liquidity ?? 0)} />
-                <Metric label="Fees earned" value={money(vault?.fees_earned ?? 0)} />
+                <Metric label="Pending Fiber" value={money(vault?.pending_channel_liquidity ?? 0)} />
+                <Metric label="Channel open" value={money(vault?.deployed_liquidity ?? 0)} />
                 <Metric label="LPs" value={String(vault?.lp_count ?? 0)} />
               </div>
             </div>
@@ -415,6 +419,7 @@ export default function Home() {
                     <label>Amount<input name="amount" type="number" min="1" placeholder="10000" required /></label>
                     <label>Days<input name="duration_days" type="number" min="1" defaultValue="30" required /></label>
                   </div>
+                  <label>Fiber peer pubkey<input name="fiber_peer_pubkey" placeholder="02..." /></label>
                   <button type="submit" disabled={busy === "request"}>{busy === "request" ? <Loader2 className="spin" size={16} /> : <ArrowRight size={16} />} Quote + reserve</button>
                 </form>
               ) : <p className="muted">Switch to merchant or operator role to request receive capacity.</p>}
@@ -428,7 +433,7 @@ export default function Home() {
                   <Metric label="Capacity" value={money(quote.amount)} />
                   <Metric label="Lease fee" value={money(quote.lease_fee)} />
                   <Metric label="Routing fee" value={`${quote.routing_fee_bps} bps`} />
-                  <div className="status-tag" data-status={quote.available ? "deployed" : "requested"}>{quote.available ? "available" : "insufficient"}</div>
+                  <div className="status-tag" data-status={quote.available ? "available" : "failed"}>{quote.available ? "available" : "insufficient"}</div>
                 </div>
               ) : <p className="muted">Submit a capacity request to calculate a quote against live vault liquidity.</p>}
             </article>
@@ -438,7 +443,7 @@ export default function Home() {
             <div className="table-panel">
               <div className="section-title">
                 <div>
-                  <p className="eyebrow">Liquidity lifecycle</p>
+                  <p className="eyebrow">Fiber lifecycle</p>
                   <h2>Capacity requests</h2>
                 </div>
                 <span>{dashboard.liquidity_requests.length} total</span>
@@ -449,14 +454,17 @@ export default function Home() {
                     <div>
                       <strong>{request.merchant_name}</strong>
                       <span>{money(request.amount)} {request.asset} · {request.duration_days} days · fee {money(request.lease_fee)}</span>
+                      {request.fiber_peer_pubkey ? <code>{shortPubkey(request.fiber_peer_pubkey)}</code> : <span>No Fiber peer pubkey attached</span>}
+                      {request.fiber_note ? <span>{request.fiber_note}</span> : null}
+                      {request.fiber_error ? <span className="error-text">{request.fiber_error}</span> : null}
                     </div>
                     <div>
-                      <span className="status-tag" data-status={request.status}>{request.status}</span>
+                      <span className="status-tag" data-status={request.status}>{statusLabel(request.status)}</span>
                       {request.status === "requested" && canRequest ? (
-                        <button type="button" onClick={() => deploy(request.id)} disabled={busy === request.id}>
-                          {busy === request.id ? <Loader2 className="spin" size={16} /> : <CheckCircle2 size={16} />} Deploy
+                        <button type="button" onClick={() => openFiberChannel(request.id)} disabled={busy === request.id}>
+                          {busy === request.id ? <Loader2 className="spin" size={16} /> : <CheckCircle2 size={16} />} Open Fiber
                         </button>
-                      ) : request.channel_id ? <code>{request.channel_id}</code> : null}
+                      ) : request.channel_id ? <code>{request.channel_id}</code> : request.fiber_temporary_channel_id ? <code>{request.fiber_temporary_channel_id}</code> : null}
                     </div>
                   </div>
                 )) : <EmptyState title="No capacity requests yet" text="Create a request after liquidity has been deposited into the vault." />}
@@ -482,8 +490,8 @@ export default function Home() {
           </section>
 
           <section className="trust-row">
-            <div><Landmark size={18} /> Authenticated vault accounting</div>
-            <div><ShieldCheck size={18} /> Live capacity reservations</div>
+            <div><Landmark size={18} /> CKB wallet sessions</div>
+            <div><ShieldCheck size={18} /> Fiber channel lifecycle</div>
           </section>
         </>
       )}
@@ -517,8 +525,29 @@ function money(value: number) {
   }).format(value);
 }
 
-
 function shortAddress(address: string) {
-  if (address.length < 12) return address;
-  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+  if (address.length <= 18) return address;
+  return `${address.slice(0, 8)}...${address.slice(-6)}`;
+}
+
+function shortPubkey(pubkey: string) {
+  const clean = pubkey.startsWith("0x") ? pubkey.slice(2) : pubkey;
+  if (clean.length <= 18) return pubkey;
+  return `${clean.slice(0, 10)}...${clean.slice(-8)}`;
+}
+
+function statusLabel(status: LiquidityStatus) {
+  return status.replaceAll("_", " ");
+}
+
+function statusMessage(request: LiquidityRequest) {
+  if (request.status === "pending_fiber_channel") return "Fiber channel open is pending with LiquidLane Core.";
+  if (request.status === "channel_open") return "Fiber channel is open.";
+  if (request.status === "failed") return request.fiber_error ?? "Fiber channel open failed.";
+  return "Capacity request reserved.";
+}
+
+function blankToUndefined(value: FormDataEntryValue | null) {
+  const text = String(value ?? "").trim();
+  return text ? text : undefined;
 }
