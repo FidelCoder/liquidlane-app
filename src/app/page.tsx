@@ -12,10 +12,11 @@ import {
   RadioTower,
   Route,
   ShieldCheck,
+  Sparkles,
   UserRound,
   Waves,
 } from "lucide-react";
-import { connectCkbWallet, signCkbChallenge } from "@/lib/ckbWallet";
+import { connectCkbWallet, signCkbChallenge, type ConnectedCkbWallet } from "@/lib/ckbWallet";
 
 type Role = "lp" | "merchant" | "operator";
 type LiquidityStatus = "requested" | "pending_fiber_channel" | "channel_open" | "failed";
@@ -104,21 +105,51 @@ type Dashboard = {
   activity: ActivityEvent[];
 };
 
+type Service = {
+  role: Role;
+  title: string;
+  kicker: string;
+  description: string;
+  icon: typeof CircleDollarSign;
+};
+
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 const TOKEN_KEY = "liquidlane_token";
 const ADDRESS_KEY = "liquidlane_ckb_address";
-const roles: Array<{ value: Role; label: string; description: string }> = [
-  { value: "lp", label: "Liquidity Provider", description: "Deposit stablecoins and track vault yield." },
-  { value: "merchant", label: "Merchant", description: "Request receive capacity for Fiber payments." },
-  { value: "operator", label: "Operator", description: "Manage vault liquidity and Fiber channel opens." },
+
+const services: Service[] = [
+  {
+    role: "lp",
+    title: "Supply liquidity",
+    kicker: "For LPs",
+    description: "Deposit stablecoin capacity and track how much of the vault is reserved for Fiber channels.",
+    icon: CircleDollarSign,
+  },
+  {
+    role: "merchant",
+    title: "Request receive capacity",
+    kicker: "For merchants",
+    description: "Reserve liquidity, attach a Fiber peer pubkey, and queue a channel open when your node is ready.",
+    icon: Route,
+  },
+  {
+    role: "operator",
+    title: "Operate lanes",
+    kicker: "For node operators",
+    description: "Manage vault accounting, capacity requests, and the Fiber channel-open lifecycle from one console.",
+    icon: RadioTower,
+  },
 ];
 
 export default function Home() {
   const [token, setToken] = useState<string | null>(null);
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [quote, setQuote] = useState<LiquidityQuote | null>(null);
+  const [wallet, setWallet] = useState<ConnectedCkbWallet | null>(null);
   const [ckbAddress, setCkbAddress] = useState<string | null>(null);
-  const [status, setStatus] = useState("Connect a CKB wallet and sign a LiquidLane challenge to continue.");
+  const [selectedRole, setSelectedRole] = useState<Role | null>(null);
+  const [displayName, setDisplayName] = useState("");
+  const [status, setStatus] = useState("Connect a CKB wallet to choose a LiquidLane service.");
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -158,12 +189,15 @@ export default function Home() {
         const data: Dashboard = await response.json();
         setDashboard(data);
         setToken(activeToken);
+        setSelectedRole(data.user.role);
         setCkbAddress(data.user.ckb_address);
         window.localStorage.setItem(TOKEN_KEY, activeToken);
         window.localStorage.setItem(ADDRESS_KEY, data.user.ckb_address);
         setStatus("Connected to LiquidLane Core.");
       } catch (error) {
         setDashboard(null);
+        window.localStorage.removeItem(TOKEN_KEY);
+        setToken(null);
         setStatus(error instanceof Error ? error.message : "Could not connect to LiquidLane Core.");
       } finally {
         setLoading(false);
@@ -174,25 +208,35 @@ export default function Home() {
 
   useEffect(() => {
     const savedToken = window.localStorage.getItem(TOKEN_KEY);
-    const savedAddress = window.localStorage.getItem(ADDRESS_KEY);
-    if (savedAddress) setCkbAddress(savedAddress);
     if (savedToken) {
       setToken(savedToken);
       refresh(savedToken);
     }
   }, [refresh]);
 
-  async function signIn(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const role = form.get("role") as Role;
-    const displayName = String(form.get("display_name") ?? "").trim();
-    setBusy("auth");
+  async function connectWallet() {
+    setBusy("connect");
     try {
-      const wallet = await connectCkbWallet();
-      setCkbAddress(wallet.ckbAddress);
-      window.localStorage.setItem(ADDRESS_KEY, wallet.ckbAddress);
+      const connected = await connectCkbWallet();
+      setWallet(connected);
+      setCkbAddress(connected.ckbAddress);
+      window.localStorage.setItem(ADDRESS_KEY, connected.ckbAddress);
+      setStatus("Wallet connected. Choose the service you want to use.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not connect CKB wallet.");
+    } finally {
+      setBusy(null);
+    }
+  }
 
+  async function enterService(role: Role) {
+    setSelectedRole(role);
+    if (!wallet) {
+      setStatus("Connect your CKB wallet before choosing a service.");
+      return;
+    }
+    setBusy(role);
+    try {
       const challengeResponse = await fetch(`${API_BASE}/auth/challenge`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -218,7 +262,7 @@ export default function Home() {
           wallet_type: proof.walletType,
           signature: proof.signature,
           lock_script: proof.lockScript,
-          display_name: displayName || undefined,
+          display_name: displayName.trim() || undefined,
         }),
       });
       if (!verifyResponse.ok) {
@@ -230,10 +274,10 @@ export default function Home() {
       setCkbAddress(data.user.ckb_address);
       window.localStorage.setItem(TOKEN_KEY, data.token);
       window.localStorage.setItem(ADDRESS_KEY, data.user.ckb_address);
-      setStatus(`CKB wallet verified: ${shortAddress(data.user.ckb_address)}.`);
+      setStatus(`Entered ${serviceLabel(role)} as ${shortAddress(data.user.ckb_address)}.`);
       await refresh(data.token);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Could not verify CKB wallet session.");
+      setStatus(error instanceof Error ? error.message : "Could not open the selected service.");
     } finally {
       setBusy(null);
     }
@@ -243,10 +287,12 @@ export default function Home() {
     window.localStorage.removeItem(TOKEN_KEY);
     window.localStorage.removeItem(ADDRESS_KEY);
     setToken(null);
+    setWallet(null);
     setCkbAddress(null);
     setDashboard(null);
     setQuote(null);
-    setStatus("Signed out.");
+    setSelectedRole(null);
+    setStatus("Signed out. Connect a CKB wallet to choose a service.");
   }
 
   async function handleDeposit(event: FormEvent<HTMLFormElement>) {
@@ -319,6 +365,7 @@ export default function Home() {
   }
 
   const vault = dashboard?.vault;
+  const hasWalletSession = Boolean(wallet || dashboard);
   const utilization = useMemo(() => {
     if (!vault || vault.total_deposits === 0) return 0;
     const used = vault.reserved_liquidity + vault.pending_channel_liquidity + vault.deployed_liquidity;
@@ -329,72 +376,99 @@ export default function Home() {
 
   return (
     <main className="app-shell">
-      <nav className="topbar" aria-label="Primary navigation">
-        <div className="brand">
-          <span className="brand-mark"><Waves size={18} /></span>
-          <span>LiquidLane</span>
-        </div>
-        {dashboard ? (
+      <section className="landing-hero">
+        <nav className="topbar landing-topbar" aria-label="Primary navigation">
+          <div className="brand">
+            <span className="brand-mark"><Waves size={18} /></span>
+            <span>LiquidLane</span>
+          </div>
           <div className="nav-actions">
-            <a href="#vault">Vault</a>
-            <a href="#requests">Requests</a>
-            <button type="button" onClick={() => refresh()}>{loading ? <Loader2 className="spin" size={16} /> : <RadioTower size={16} />} Sync</button>
-            <button type="button" className="secondary-button" onClick={signOut}><LogOut size={16} /> Sign out</button>
+            {dashboard ? <a href="#workspace">Workspace</a> : <a href="#services">Services</a>}
+            <a href="#lifecycle">Lifecycle</a>
+            {hasWalletSession && ckbAddress ? <span className="connected-pill"><UserRound size={15} /> {shortAddress(ckbAddress)}</span> : null}
+            {hasWalletSession ? (
+              <button type="button" className="secondary-button dark" onClick={signOut}><LogOut size={16} /> Disconnect</button>
+            ) : (
+              <button type="button" onClick={connectWallet} disabled={busy === "connect"}>
+                {busy === "connect" ? <Loader2 className="spin" size={16} /> : <UserRound size={16} />} Connect wallet
+              </button>
+            )}
           </div>
-        ) : null}
-      </nav>
+        </nav>
 
-      {!dashboard ? (
-        <section className="auth-layout">
-          <div className="auth-copy">
-            <p className="eyebrow">Fiber native access</p>
-            <h1>Operate stablecoin liquidity for Fiber channels.</h1>
-            <p className="lede">Connect JoyID on CKB, sign a LiquidLane challenge, and work with live Fiber channel state from Core.</p>
-            <div className="status-strip"><RadioTower size={16} /> {status}</div>
-          </div>
-          <form className="auth-panel" onSubmit={signIn}>
-            <h2>CKB wallet session</h2>
-            <label>Display name<input name="display_name" placeholder="Atlas LP" /></label>
-            <div className="wallet-preview">{ckbAddress ? shortAddress(ckbAddress) : "No CKB wallet connected yet"}</div>
-            <div className="role-grid">
-              {roles.map((role) => (
-                <label key={role.value} className="role-card">
-                  <input name="role" type="radio" value={role.value} defaultChecked={role.value === "operator"} />
-                  <strong>{role.label}</strong>
-                  <span>{role.description}</span>
-                </label>
-              ))}
+        <div className="landing-content">
+          <div className="landing-copy">
+            <p className="eyebrow">Fiber liquidity infrastructure</p>
+            <h1>Stablecoin capacity for payment channels, ready when apps need it.</h1>
+            <p className="lede">LiquidLane gives LPs, merchants, and node operators one CKB-native lane for vault liquidity, receive capacity, and Fiber channel opens.</p>
+            <div className="hero-actions">
+              <button type="button" onClick={hasWalletSession ? () => document.getElementById("services")?.scrollIntoView({ behavior: "smooth" }) : connectWallet} disabled={busy === "connect"}>
+                {busy === "connect" ? <Loader2 className="spin" size={16} /> : <ArrowRight size={16} />} {hasWalletSession ? "Choose service" : "Connect wallet"}
+              </button>
+              <a href="#lifecycle">View lifecycle</a>
             </div>
-            <button type="submit" disabled={busy === "auth"}>{busy === "auth" ? <Loader2 className="spin" size={16} /> : <UserRound size={16} />} Connect JoyID</button>
-          </form>
-        </section>
-      ) : (
-        <>
-          <section className="hero dashboard-hero">
-            <div className="hero-copy">
+          </div>
+          <div className="hero-metrics" aria-hidden="true">
+            <div><span>Vault</span><strong>{money(vault?.total_deposits ?? 0)}</strong></div>
+            <div><span>Available</span><strong>{money(vault?.available_liquidity ?? 0)}</strong></div>
+            <div><span>Pending Fiber</span><strong>{money(vault?.pending_channel_liquidity ?? 0)}</strong></div>
+          </div>
+        </div>
+      </section>
+
+      <section className="service-section" id="services">
+        <div className="section-heading">
+          <p className="eyebrow">Choose service</p>
+          <h2>{hasWalletSession ? "What do you want to do on LiquidLane?" : "Connect once, then choose the lane you need."}</h2>
+          <p className="muted">{status}</p>
+        </div>
+        <div className="service-grid">
+          {services.map((service) => {
+            const Icon = service.icon;
+            const active = selectedRole === service.role;
+            return (
+              <article className={active ? "service-card active" : "service-card"} key={service.role}>
+                <span className="icon"><Icon size={21} /></span>
+                <p className="eyebrow">{service.kicker}</p>
+                <h3>{service.title}</h3>
+                <p>{service.description}</p>
+                {wallet && !dashboard ? (
+                  <label>Display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Atlas LP" /></label>
+                ) : null}
+                <button type="button" onClick={() => enterService(service.role)} disabled={(!wallet && dashboard?.user.role !== service.role) || busy === service.role}>
+                  {busy === service.role ? <Loader2 className="spin" size={16} /> : <Sparkles size={16} />} {dashboard?.user.role === service.role ? "Current service" : wallet ? "Enter service" : "Connect first"}
+                </button>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+
+      {dashboard ? (
+        <section className="workspace" id="workspace">
+          <div className="workspace-head">
+            <div>
               <p className="eyebrow">{dashboard.user.role} workspace</p>
-              <h1>Fiber capacity with live vault accounting.</h1>
-              <p className="lede">LiquidLane reserves vault liquidity, queues Fiber channel opens, and only marks capacity open when Core has a real channel state.</p>
-              <div className="status-strip"><UserRound size={16} /> {dashboard.user.display_name} · {shortAddress(dashboard.user.ckb_address)}</div>
-              <p className="notice">{status}</p>
+              <h2>Live vault and Fiber capacity controls.</h2>
             </div>
+            <button type="button" className="secondary-button" onClick={() => refresh()}>{loading ? <Loader2 className="spin" size={16} /> : <RadioTower size={16} />} Sync</button>
+          </div>
 
-            <div className="operation-panel" aria-label="LiquidLane vault overview">
-              <div className="panel-header">
-                <span>{vault?.asset ?? "USDC"} Vault</span>
-                <strong>{utilization}% used</strong>
-              </div>
-              <div className="meter" aria-hidden="true"><span style={{ width: `${Math.max(utilization, 2)}%` }} /></div>
-              <div className="metric-grid">
-                <Metric label="Total deposits" value={money(vault?.total_deposits ?? 0)} />
-                <Metric label="Available" value={money(vault?.available_liquidity ?? 0)} />
-                <Metric label="Reserved" value={money(vault?.reserved_liquidity ?? 0)} />
-                <Metric label="Pending Fiber" value={money(vault?.pending_channel_liquidity ?? 0)} />
-                <Metric label="Channel open" value={money(vault?.deployed_liquidity ?? 0)} />
-                <Metric label="LPs" value={String(vault?.lp_count ?? 0)} />
-              </div>
+          <div className="operation-panel" aria-label="LiquidLane vault overview">
+            <div className="panel-header">
+              <span>{vault?.asset ?? "USDC"} Vault</span>
+              <strong>{utilization}% used</strong>
             </div>
-          </section>
+            <div className="meter" aria-hidden="true"><span style={{ width: `${Math.max(utilization, 2)}%` }} /></div>
+            <div className="metric-grid">
+              <Metric label="Total deposits" value={money(vault?.total_deposits ?? 0)} />
+              <Metric label="Available" value={money(vault?.available_liquidity ?? 0)} />
+              <Metric label="Reserved" value={money(vault?.reserved_liquidity ?? 0)} />
+              <Metric label="Pending Fiber" value={money(vault?.pending_channel_liquidity ?? 0)} />
+              <Metric label="Channel open" value={money(vault?.deployed_liquidity ?? 0)} />
+              <Metric label="LPs" value={String(vault?.lp_count ?? 0)} />
+            </div>
+          </div>
 
           <section className="product-grid" id="vault">
             <article className={!canDeposit ? "disabled-card" : ""}>
@@ -439,7 +513,7 @@ export default function Home() {
             </article>
           </section>
 
-          <section className="split-section" id="requests">
+          <section className="split-section" id="lifecycle">
             <div className="table-panel">
               <div className="section-title">
                 <div>
@@ -488,12 +562,13 @@ export default function Home() {
               </div>
             </div>
           </section>
-
-          <section className="trust-row">
-            <div><Landmark size={18} /> CKB wallet sessions</div>
-            <div><ShieldCheck size={18} /> Fiber channel lifecycle</div>
-          </section>
-        </>
+        </section>
+      ) : (
+        <section className="lifecycle-band" id="lifecycle">
+          <div><Landmark size={18} /> CKB wallet session</div>
+          <div><ShieldCheck size={18} /> Vault capacity accounting</div>
+          <div><RadioTower size={18} /> Fiber channel lifecycle</div>
+        </section>
       )}
     </main>
   );
@@ -534,6 +609,10 @@ function shortPubkey(pubkey: string) {
   const clean = pubkey.startsWith("0x") ? pubkey.slice(2) : pubkey;
   if (clean.length <= 18) return pubkey;
   return `${clean.slice(0, 10)}...${clean.slice(-8)}`;
+}
+
+function serviceLabel(role: Role) {
+  return services.find((service) => service.role === role)?.title ?? role;
 }
 
 function statusLabel(status: LiquidityStatus) {
