@@ -1,6 +1,6 @@
 # LiquidLane App
 
-Wallet-authenticated web app for stablecoin liquidity vaults, channel capacity requests, and LP yield tracking on LiquidLane.
+CKB wallet-authenticated web app for stablecoin liquidity vaults, Fiber capacity requests, and LP yield tracking on LiquidLane.
 
 LiquidLane helps LPs deposit stablecoin liquidity and lets merchants, wallets, and apps request Fiber payment-channel capacity on demand.
 
@@ -14,25 +14,21 @@ npm run dev
 
 The app runs at `http://localhost:3000` by default.
 
-## Wallet Auth
+## CKB Wallet Auth
 
-The app uses an injected wallet provider for the MVP:
+The app uses JoyID on CKB:
 
-1. Request wallet account.
+1. Connect JoyID and read the CKB address.
 2. Request a LiquidLane challenge from Core.
-3. Ask the wallet to sign the challenge.
-4. Verify the signature on the backend.
+3. Sign the challenge with JoyID.
+4. Send the CKB proof and JoyID lock script to Core.
 5. Store the returned bearer session locally.
 
-## API Connection
+## Fiber Lifecycle
+
+Capacity starts as `requested`. Opening a channel sends the request to LiquidLane Core, which either submits `open_channel` to a configured Fiber node or keeps the request in `pending_fiber_channel`. The UI does not invent channel ids.
 
 Set `NEXT_PUBLIC_API_BASE_URL` if LiquidLane Core is not running on `http://localhost:8080`.
-
-```bash
-NEXT_PUBLIC_API_BASE_URL=http://localhost:8080 npm run dev
-```
-
-The app requires LiquidLane Core to be running. It does not load fake fallback dashboard data.
 
 ## Checks
 

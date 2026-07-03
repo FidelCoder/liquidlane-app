@@ -179,7 +179,10 @@ code { background: #eef2ee; border-radius: 6px; font-size: 0.78rem; padding: 6px
   text-transform: capitalize;
   width: fit-content;
 }
-.status-tag[data-status="deployed"] { background: rgba(24, 135, 90, 0.14); color: var(--green); }
+.status-tag[data-status="available"], .status-tag[data-status="channel_open"] { background: rgba(24, 135, 90, 0.14); color: var(--green); }
+.status-tag[data-status="pending_fiber_channel"] { background: rgba(8, 127, 122, 0.14); color: var(--accent-strong); }
+.status-tag[data-status="failed"] { background: rgba(184, 71, 71, 0.14); color: var(--red); }
+.error-text { color: var(--red) !important; }
 .activity-list > div { align-items: flex-start; border-bottom: 1px solid var(--line); display: grid; gap: 10px; grid-template-columns: 28px 1fr; padding: 12px 0; }
 .activity-list > div:last-child { border-bottom: 0; }
 .activity-list span { align-items: center; background: rgba(8, 127, 122, 0.1); border-radius: 8px; color: var(--accent); display: flex; height: 28px; justify-content: center; width: 28px; }
