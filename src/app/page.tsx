@@ -34,8 +34,14 @@ type AuthResponse = {
   user: UserProfile;
 };
 
-type VaultSummary = {
+type VaultConfig = {
   asset: string;
+  address: string | null;
+  network: string;
+  configured: boolean;
+};
+
+type VaultSummary = VaultConfig & {
   total_deposits: number;
   reserved_liquidity: number;
   pending_channel_liquidity: number;
@@ -110,7 +116,6 @@ type Service = {
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 const DEFAULT_ASSET = "CKB";
-const VAULT_CKB_ADDRESS = process.env.NEXT_PUBLIC_LIQUIDLANE_VAULT_CKB_ADDRESS ?? "";
 const TOKEN_KEY = "liquidlane_token";
 const ADDRESS_KEY = "liquidlane_ckb_address";
 
@@ -141,6 +146,7 @@ const services: Service[] = [
 export default function Home() {
   const [token, setToken] = useState<string | null>(null);
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
+  const [activeVault, setActiveVault] = useState<VaultConfig | null>(null);
   const [quote, setQuote] = useState<LiquidityQuote | null>(null);
   const [wallet, setWallet] = useState<ConnectedCkbWallet | null>(null);
   const [ckbAddress, setCkbAddress] = useState<string | null>(null);
@@ -149,6 +155,24 @@ export default function Home() {
   const [status, setStatus] = useState("Connect a CKB wallet to choose a LiquidLane service.");
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+
+
+  const loadVault = useCallback(async function loadVault() {
+    try {
+      const response = await fetch(`${API_BASE}/vault`);
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({ error: "Could not load active vault" }));
+        throw new Error(body.error ?? "Could not load active vault");
+      }
+      const vault: VaultConfig = await response.json();
+      setActiveVault(vault);
+      return vault;
+    } catch (error) {
+      setActiveVault(null);
+      setStatus(error instanceof Error ? error.message : "Could not load active vault.");
+      return null;
+    }
+  }, []);
 
   const request = useCallback(
     async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -185,6 +209,7 @@ export default function Home() {
         }
         const data: Dashboard = await response.json();
         setDashboard(data);
+        setActiveVault(data.vault);
         setToken(activeToken);
         setSelectedRole(data.user.role);
         setCkbAddress(data.user.ckb_address);
@@ -204,12 +229,13 @@ export default function Home() {
   );
 
   useEffect(() => {
+    loadVault();
     const savedToken = window.localStorage.getItem(TOKEN_KEY);
     if (savedToken) {
       setToken(savedToken);
       refresh(savedToken);
     }
-  }, [refresh]);
+  }, [loadVault, refresh]);
 
   async function connectWallet() {
     setBusy("connect");
@@ -284,11 +310,14 @@ export default function Home() {
     const form = new FormData(event.currentTarget);
     const amount = Number(form.get("amount"));
     const asset = String(form.get("asset") ?? DEFAULT_ASSET).trim().toUpperCase();
-    const vaultAddress = String(form.get("vault_address") ?? VAULT_CKB_ADDRESS).trim();
+    const vaultAddress = activeVault?.address?.trim() ?? "";
     setBusy("deposit");
     try {
       if (!wallet) {
         throw new Error("Reconnect your CKB wallet before supplying liquidity.");
+      }
+      if (!activeVault?.configured || !vaultAddress) {
+        throw new Error("LiquidLane vault is not configured yet.");
       }
       setStatus("Confirm the supply transaction in your CKB wallet.");
       const signed = await signSupplyTransaction(wallet, { asset, amount, to: vaultAddress });
@@ -358,15 +387,17 @@ export default function Home() {
     }
   }
 
-  const vault = dashboard?.vault;
+  const vault = dashboard?.vault ?? activeVault;
+  const vaultSummary = dashboard?.vault;
   const hasWalletSession = Boolean(wallet || dashboard);
   const utilization = useMemo(() => {
-    if (!vault || vault.total_deposits === 0) return 0;
-    const used = vault.reserved_liquidity + vault.pending_channel_liquidity + vault.deployed_liquidity;
-    return Math.round((used / vault.total_deposits) * 100);
-  }, [vault]);
-  const canDeposit = dashboard?.user.role === "lp" || dashboard?.user.role === "operator";
-  const canRequest = dashboard?.user.role === "merchant" || dashboard?.user.role === "operator";
+    if (!vaultSummary || vaultSummary.total_deposits === 0) return 0;
+    const used = vaultSummary.reserved_liquidity + vaultSummary.pending_channel_liquidity + vaultSummary.deployed_liquidity;
+    return Math.round((used / vaultSummary.total_deposits) * 100);
+  }, [vaultSummary]);
+  const showSupply = dashboard?.user.role === "lp" || dashboard?.user.role === "operator";
+  const showRequest = dashboard?.user.role === "merchant" || dashboard?.user.role === "operator";
+  const vaultReady = Boolean(vault?.configured && vault.address);
 
   return (
     <main className="app-shell">
@@ -403,9 +434,9 @@ export default function Home() {
             </div>
           </div>
           <div className="hero-metrics" aria-hidden="true">
-            <div><span>Vault</span><strong>{money(vault?.total_deposits ?? 0)}</strong></div>
-            <div><span>Available</span><strong>{money(vault?.available_liquidity ?? 0)}</strong></div>
-            <div><span>Pending Fiber</span><strong>{money(vault?.pending_channel_liquidity ?? 0)}</strong></div>
+            <div><span>Vault</span><strong>{assetAmount(vaultSummary?.total_deposits ?? 0, vault?.asset ?? DEFAULT_ASSET)}</strong></div>
+            <div><span>Available</span><strong>{assetAmount(vaultSummary?.available_liquidity ?? 0, vault?.asset ?? DEFAULT_ASSET)}</strong></div>
+            <div><span>Network</span><strong>{vault?.network ?? "testnet"}</strong></div>
           </div>
         </div>
       </section>
@@ -450,40 +481,40 @@ export default function Home() {
 
           <div className="operation-panel" aria-label="LiquidLane vault overview">
             <div className="panel-header">
-              <span>{vault?.asset ?? "USDC"} Vault</span>
+              <span>{vault?.asset ?? DEFAULT_ASSET} Vault</span>
               <strong>{utilization}% used</strong>
             </div>
             <div className="meter" aria-hidden="true"><span style={{ width: `${Math.max(utilization, 2)}%` }} /></div>
             <div className="metric-grid">
-              <Metric label="Total deposits" value={assetAmount(vault?.total_deposits ?? 0, vault?.asset ?? DEFAULT_ASSET)} />
-              <Metric label="Available" value={assetAmount(vault?.available_liquidity ?? 0, vault?.asset ?? DEFAULT_ASSET)} />
-              <Metric label="Reserved" value={assetAmount(vault?.reserved_liquidity ?? 0, vault?.asset ?? DEFAULT_ASSET)} />
-              <Metric label="Pending Fiber" value={assetAmount(vault?.pending_channel_liquidity ?? 0, vault?.asset ?? DEFAULT_ASSET)} />
-              <Metric label="Channel open" value={assetAmount(vault?.deployed_liquidity ?? 0, vault?.asset ?? DEFAULT_ASSET)} />
-              <Metric label="LPs" value={String(vault?.lp_count ?? 0)} />
+              <Metric label="Total supplied" value={assetAmount(vaultSummary?.total_deposits ?? 0, vault?.asset ?? DEFAULT_ASSET)} />
+              <Metric label="Available" value={assetAmount(vaultSummary?.available_liquidity ?? 0, vault?.asset ?? DEFAULT_ASSET)} />
+              <Metric label="Reserved" value={assetAmount(vaultSummary?.reserved_liquidity ?? 0, vault?.asset ?? DEFAULT_ASSET)} />
+              <Metric label="Pending Fiber" value={assetAmount(vaultSummary?.pending_channel_liquidity ?? 0, vault?.asset ?? DEFAULT_ASSET)} />
+              <Metric label="Channel open" value={assetAmount(vaultSummary?.deployed_liquidity ?? 0, vault?.asset ?? DEFAULT_ASSET)} />
+              <Metric label="LPs" value={String(vaultSummary?.lp_count ?? 0)} />
             </div>
           </div>
 
-          <section className="product-grid" id="vault">
-            <article className={!canDeposit ? "disabled-card" : ""}>
-              <span className="icon"><CircleDollarSign size={20} /></span>
-              <h2>Supply liquidity</h2>
-              {canDeposit ? (
+          <section className="product-grid focused-grid" id="vault">
+            {showSupply ? (
+              <article>
+                <span className="icon"><CircleDollarSign size={20} /></span>
+                <h2>Supply liquidity</h2>
                 <form className="stack-form" onSubmit={handleDeposit}>
-                  <label>Asset<input name="asset" defaultValue={DEFAULT_ASSET} readOnly required /></label>
-                  <label>Vault address<input name="vault_address" defaultValue={VAULT_CKB_ADDRESS} placeholder="ckt1..." required /></label>
+                  <label>Asset<input name="asset" value={vault?.asset ?? DEFAULT_ASSET} readOnly required /></label>
                   <label>Amount<input name="amount" type="number" min="1" step="1" placeholder="100" required /></label>
-                  <button type="submit" disabled={busy === "deposit" || !wallet}>{busy === "deposit" ? <Loader2 className="spin" size={16} /> : <Banknote size={16} />} Confirm supply</button>
+                  <button type="submit" disabled={busy === "deposit" || !wallet || !vaultReady}>{busy === "deposit" ? <Loader2 className="spin" size={16} /> : <Banknote size={16} />} Confirm supply</button>
                 </form>
-              ) : <p className="muted">Switch to LP or operator role to supply vault liquidity.</p>}
-            </article>
+                {!vaultReady ? <p className="muted compact-note">Vault setup is pending on Core.</p> : null}
+              </article>
+            ) : null}
 
-            <article className={!canRequest ? "disabled-card" : ""}>
-              <span className="icon"><Route size={20} /></span>
-              <h2>Request capacity</h2>
-              {canRequest ? (
+            {showRequest ? (
+              <article>
+                <span className="icon"><Route size={20} /></span>
+                <h2>Request capacity</h2>
                 <form className="stack-form" onSubmit={handleRequest}>
-                  <label>Asset<input name="asset" defaultValue={DEFAULT_ASSET} required /></label>
+                  <label>Asset<input name="asset" value={vault?.asset ?? DEFAULT_ASSET} readOnly required /></label>
                   <div className="form-row">
                     <label>Amount<input name="amount" type="number" min="1" placeholder="10000" required /></label>
                     <label>Days<input name="duration_days" type="number" min="1" defaultValue="30" required /></label>
@@ -491,21 +522,21 @@ export default function Home() {
                   <label>Fiber peer pubkey<input name="fiber_peer_pubkey" placeholder="02..." /></label>
                   <button type="submit" disabled={busy === "request"}>{busy === "request" ? <Loader2 className="spin" size={16} /> : <ArrowRight size={16} />} Quote + reserve</button>
                 </form>
-              ) : <p className="muted">Switch to merchant or operator role to request receive capacity.</p>}
-            </article>
+              </article>
+            ) : null}
 
-            <article>
-              <span className="icon"><ShieldCheck size={20} /></span>
-              <h2>Quote result</h2>
-              {quote ? (
+            {showRequest && quote ? (
+              <article>
+                <span className="icon"><ShieldCheck size={20} /></span>
+                <h2>Quote result</h2>
                 <div className="quote-box">
                   <Metric label="Capacity" value={assetAmount(quote.amount, quote.asset)} />
                   <Metric label="Lease fee" value={assetAmount(quote.lease_fee, quote.asset)} />
                   <Metric label="Routing fee" value={`${quote.routing_fee_bps} bps`} />
                   <div className="status-tag" data-status={quote.available ? "available" : "failed"}>{quote.available ? "available" : "insufficient"}</div>
                 </div>
-              ) : <p className="muted">Submit a capacity request to calculate a quote against live vault liquidity.</p>}
-            </article>
+              </article>
+            ) : null}
           </section>
 
           <section className="split-section" id="lifecycle">
@@ -529,7 +560,7 @@ export default function Home() {
                     </div>
                     <div>
                       <span className="status-tag" data-status={request.status}>{statusLabel(request.status)}</span>
-                      {request.status === "requested" && canRequest ? (
+                      {request.status === "requested" && showRequest ? (
                         <button type="button" onClick={() => openFiberChannel(request.id)} disabled={busy === request.id}>
                           {busy === request.id ? <Loader2 className="spin" size={16} /> : <CheckCircle2 size={16} />} Open Fiber
                         </button>

@@ -25,7 +25,7 @@ The app uses JoyID on CKB:
 1. Connect JoyID and read the CKB address.
 2. Choose a service and open a Core wallet session.
 3. Sign only when confirming a value-moving action.
-4. Supplying liquidity signs and broadcasts a CKB transaction to the configured vault address.
+4. Supplying liquidity signs and broadcasts a CKB transaction to the active vault returned by Core.
 5. Core records the deposit only after receiving the broadcast transaction hash and signed transaction proof.
 
 ## Fiber Lifecycle
@@ -34,7 +34,7 @@ Capacity starts as `requested`. Opening a channel sends the request to LiquidLan
 
 Set `NEXT_PUBLIC_API_BASE_URL` if LiquidLane Core is not running on `http://localhost:8080`.
 Set `NEXT_PUBLIC_CKB_RPC_URL` to a CKB RPC endpoint that accepts `send_transaction`.
-Set `NEXT_PUBLIC_LIQUIDLANE_VAULT_CKB_ADDRESS` to the CKB address that receives LP supply transactions.
+The vault address is loaded from LiquidLane Core through `/vault`; configure it on the backend.
 
 ## Checks
 
