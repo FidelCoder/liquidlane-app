@@ -16,7 +16,7 @@ import {
   UserRound,
   Waves,
 } from "lucide-react";
-import { connectCkbWallet, signCkbChallenge, type ConnectedCkbWallet } from "@/lib/ckbWallet";
+import { connectCkbWallet, signSupplyTransaction, type ConnectedCkbWallet } from "@/lib/ckbWallet";
 
 type Role = "lp" | "merchant" | "operator";
 type LiquidityStatus = "requested" | "pending_fiber_channel" | "channel_open" | "failed";
@@ -27,12 +27,6 @@ type UserProfile = {
   ckb_address: string;
   wallet_type: string;
   role: Role;
-};
-
-type ChallengeResponse = {
-  challenge_id: string;
-  message: string;
-  expires_at: string;
 };
 
 type AuthResponse = {
@@ -58,6 +52,7 @@ type Deposit = {
   ckb_address: string;
   asset: string;
   amount: number;
+  tx_hash: string | null;
   created_at: string;
 };
 
@@ -114,6 +109,8 @@ type Service = {
 };
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
+const DEFAULT_ASSET = "CKB";
+const VAULT_CKB_ADDRESS = process.env.NEXT_PUBLIC_LIQUIDLANE_VAULT_CKB_ADDRESS ?? "";
 const TOKEN_KEY = "liquidlane_token";
 const ADDRESS_KEY = "liquidlane_ckb_address";
 
@@ -122,7 +119,7 @@ const services: Service[] = [
     role: "lp",
     title: "Supply liquidity",
     kicker: "For LPs",
-    description: "Deposit stablecoin capacity and track how much of the vault is reserved for Fiber channels.",
+    description: "Supply CKB vault capacity and track how much is reserved for Fiber channels.",
     icon: CircleDollarSign,
   },
   {
@@ -179,7 +176,7 @@ export default function Home() {
       if (!activeToken) return;
       setLoading(true);
       try {
-        const response = await fetch(`${API_BASE}/dashboard?asset=USDC`, {
+        const response = await fetch(`${API_BASE}/dashboard?asset=${DEFAULT_ASSET}`, {
           headers: { Authorization: `Bearer ${activeToken}` },
         });
         if (!response.ok) {
@@ -231,50 +228,37 @@ export default function Home() {
 
   async function enterService(role: Role) {
     setSelectedRole(role);
-    if (!wallet) {
-      setStatus("Connect your CKB wallet before choosing a service.");
-      return;
-    }
     setBusy(role);
     try {
-      const challengeResponse = await fetch(`${API_BASE}/auth/challenge`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ckb_address: wallet.ckbAddress,
-          wallet_type: wallet.walletType,
-          role,
-        }),
-      });
-      if (!challengeResponse.ok) {
-        const body = await challengeResponse.json().catch(() => ({ error: "Challenge failed" }));
-        throw new Error(body.error ?? "Challenge failed");
+      let activeWallet = wallet;
+      if (!activeWallet) {
+        activeWallet = await connectCkbWallet();
+        setWallet(activeWallet);
+        setCkbAddress(activeWallet.ckbAddress);
+        window.localStorage.setItem(ADDRESS_KEY, activeWallet.ckbAddress);
       }
-      const challenge: ChallengeResponse = await challengeResponse.json();
-      const proof = await signCkbChallenge(challenge.message, wallet);
 
-      const verifyResponse = await fetch(`${API_BASE}/auth/verify`, {
+      const connectResponse = await fetch(`${API_BASE}/auth/connect`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          challenge_id: challenge.challenge_id,
-          ckb_address: proof.ckbAddress,
-          wallet_type: proof.walletType,
-          signature: proof.signature,
-          lock_script: proof.lockScript,
+          ckb_address: activeWallet.ckbAddress,
+          wallet_type: activeWallet.walletType,
+          role,
+          lock_script: activeWallet.lockScript,
           display_name: displayName.trim() || undefined,
         }),
       });
-      if (!verifyResponse.ok) {
-        const body = await verifyResponse.json().catch(() => ({ error: "CKB wallet verification failed" }));
-        throw new Error(body.error ?? "CKB wallet verification failed");
+      if (!connectResponse.ok) {
+        const body = await connectResponse.json().catch(() => ({ error: "Could not open wallet session" }));
+        throw new Error(body.error ?? "Could not open wallet session");
       }
-      const data: AuthResponse = await verifyResponse.json();
+      const data: AuthResponse = await connectResponse.json();
       setToken(data.token);
       setCkbAddress(data.user.ckb_address);
       window.localStorage.setItem(TOKEN_KEY, data.token);
       window.localStorage.setItem(ADDRESS_KEY, data.user.ckb_address);
-      setStatus(`Entered ${serviceLabel(role)} as ${shortAddress(data.user.ckb_address)}.`);
+      setStatus(`Opened ${serviceLabel(role)} for ${shortAddress(data.user.ckb_address)}.`);
       await refresh(data.token);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not open the selected service.");
@@ -298,20 +282,30 @@ export default function Home() {
   async function handleDeposit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
+    const amount = Number(form.get("amount"));
+    const asset = String(form.get("asset") ?? DEFAULT_ASSET).trim().toUpperCase();
+    const vaultAddress = String(form.get("vault_address") ?? VAULT_CKB_ADDRESS).trim();
     setBusy("deposit");
     try {
+      if (!wallet) {
+        throw new Error("Reconnect your CKB wallet before supplying liquidity.");
+      }
+      setStatus("Confirm the supply transaction in your CKB wallet.");
+      const signed = await signSupplyTransaction(wallet, { asset, amount, to: vaultAddress });
       await request<Deposit>("/deposits", {
         method: "POST",
         body: JSON.stringify({
-          asset: form.get("asset"),
-          amount: Number(form.get("amount")),
+          asset,
+          amount,
+          tx_hash: signed.txHash,
+          signed_tx: signed.tx,
         }),
       });
       event.currentTarget.reset();
-      setStatus("Vault liquidity recorded.");
+      setStatus(`Supplied ${assetAmount(amount, asset)} to the LiquidLane vault${signed.txHash ? ` (${shortHash(signed.txHash)})` : ""}.`);
       await refresh();
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Deposit failed.");
+      setStatus(error instanceof Error ? error.message : "Supply failed.");
     } finally {
       setBusy(null);
     }
@@ -334,7 +328,7 @@ export default function Home() {
       });
       setQuote(quoteData);
       if (!quoteData.available) {
-        setStatus(`Only ${money(quoteData.available_liquidity)} ${quoteData.asset} is available.`);
+        setStatus(`Only ${assetAmount(quoteData.available_liquidity, quoteData.asset)} is available.`);
         return;
       }
       await request<LiquidityRequest>("/liquidity/requests", {
@@ -435,8 +429,8 @@ export default function Home() {
                 {wallet && !dashboard ? (
                   <label>Display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Atlas LP" /></label>
                 ) : null}
-                <button type="button" onClick={() => enterService(service.role)} disabled={(!wallet && dashboard?.user.role !== service.role) || busy === service.role}>
-                  {busy === service.role ? <Loader2 className="spin" size={16} /> : <Sparkles size={16} />} {dashboard?.user.role === service.role ? "Current service" : wallet ? "Enter service" : "Connect first"}
+                <button type="button" onClick={() => enterService(service.role)} disabled={busy === service.role}>
+                  {busy === service.role ? <Loader2 className="spin" size={16} /> : <Sparkles size={16} />} {dashboard?.user.role === service.role ? "Current service" : hasWalletSession ? "Open service" : "Connect + open"}
                 </button>
               </article>
             );
@@ -461,11 +455,11 @@ export default function Home() {
             </div>
             <div className="meter" aria-hidden="true"><span style={{ width: `${Math.max(utilization, 2)}%` }} /></div>
             <div className="metric-grid">
-              <Metric label="Total deposits" value={money(vault?.total_deposits ?? 0)} />
-              <Metric label="Available" value={money(vault?.available_liquidity ?? 0)} />
-              <Metric label="Reserved" value={money(vault?.reserved_liquidity ?? 0)} />
-              <Metric label="Pending Fiber" value={money(vault?.pending_channel_liquidity ?? 0)} />
-              <Metric label="Channel open" value={money(vault?.deployed_liquidity ?? 0)} />
+              <Metric label="Total deposits" value={assetAmount(vault?.total_deposits ?? 0, vault?.asset ?? DEFAULT_ASSET)} />
+              <Metric label="Available" value={assetAmount(vault?.available_liquidity ?? 0, vault?.asset ?? DEFAULT_ASSET)} />
+              <Metric label="Reserved" value={assetAmount(vault?.reserved_liquidity ?? 0, vault?.asset ?? DEFAULT_ASSET)} />
+              <Metric label="Pending Fiber" value={assetAmount(vault?.pending_channel_liquidity ?? 0, vault?.asset ?? DEFAULT_ASSET)} />
+              <Metric label="Channel open" value={assetAmount(vault?.deployed_liquidity ?? 0, vault?.asset ?? DEFAULT_ASSET)} />
               <Metric label="LPs" value={String(vault?.lp_count ?? 0)} />
             </div>
           </div>
@@ -473,14 +467,15 @@ export default function Home() {
           <section className="product-grid" id="vault">
             <article className={!canDeposit ? "disabled-card" : ""}>
               <span className="icon"><CircleDollarSign size={20} /></span>
-              <h2>Deposit liquidity</h2>
+              <h2>Supply liquidity</h2>
               {canDeposit ? (
                 <form className="stack-form" onSubmit={handleDeposit}>
-                  <label>Asset<input name="asset" defaultValue="USDC" required /></label>
-                  <label>Amount<input name="amount" type="number" min="1" placeholder="25000" required /></label>
-                  <button type="submit" disabled={busy === "deposit"}>{busy === "deposit" ? <Loader2 className="spin" size={16} /> : <Banknote size={16} />} Deposit</button>
+                  <label>Asset<input name="asset" defaultValue={DEFAULT_ASSET} readOnly required /></label>
+                  <label>Vault address<input name="vault_address" defaultValue={VAULT_CKB_ADDRESS} placeholder="ckt1..." required /></label>
+                  <label>Amount<input name="amount" type="number" min="1" step="1" placeholder="100" required /></label>
+                  <button type="submit" disabled={busy === "deposit" || !wallet}>{busy === "deposit" ? <Loader2 className="spin" size={16} /> : <Banknote size={16} />} Confirm supply</button>
                 </form>
-              ) : <p className="muted">Switch to LP or operator role to deposit vault liquidity.</p>}
+              ) : <p className="muted">Switch to LP or operator role to supply vault liquidity.</p>}
             </article>
 
             <article className={!canRequest ? "disabled-card" : ""}>
@@ -488,7 +483,7 @@ export default function Home() {
               <h2>Request capacity</h2>
               {canRequest ? (
                 <form className="stack-form" onSubmit={handleRequest}>
-                  <label>Asset<input name="asset" defaultValue="USDC" required /></label>
+                  <label>Asset<input name="asset" defaultValue={DEFAULT_ASSET} required /></label>
                   <div className="form-row">
                     <label>Amount<input name="amount" type="number" min="1" placeholder="10000" required /></label>
                     <label>Days<input name="duration_days" type="number" min="1" defaultValue="30" required /></label>
@@ -504,8 +499,8 @@ export default function Home() {
               <h2>Quote result</h2>
               {quote ? (
                 <div className="quote-box">
-                  <Metric label="Capacity" value={money(quote.amount)} />
-                  <Metric label="Lease fee" value={money(quote.lease_fee)} />
+                  <Metric label="Capacity" value={assetAmount(quote.amount, quote.asset)} />
+                  <Metric label="Lease fee" value={assetAmount(quote.lease_fee, quote.asset)} />
                   <Metric label="Routing fee" value={`${quote.routing_fee_bps} bps`} />
                   <div className="status-tag" data-status={quote.available ? "available" : "failed"}>{quote.available ? "available" : "insufficient"}</div>
                 </div>
@@ -527,7 +522,7 @@ export default function Home() {
                   <div className="request-card" key={request.id}>
                     <div>
                       <strong>{request.merchant_name}</strong>
-                      <span>{money(request.amount)} {request.asset} · {request.duration_days} days · fee {money(request.lease_fee)}</span>
+                      <span>{assetAmount(request.amount, request.asset)} · {request.duration_days} days · fee {assetAmount(request.lease_fee, request.asset)}</span>
                       {request.fiber_peer_pubkey ? <code>{shortPubkey(request.fiber_peer_pubkey)}</code> : <span>No Fiber peer pubkey attached</span>}
                       {request.fiber_note ? <span>{request.fiber_note}</span> : null}
                       {request.fiber_error ? <span className="error-text">{request.fiber_error}</span> : null}
@@ -541,7 +536,7 @@ export default function Home() {
                       ) : request.channel_id ? <code>{request.channel_id}</code> : request.fiber_temporary_channel_id ? <code>{request.fiber_temporary_channel_id}</code> : null}
                     </div>
                   </div>
-                )) : <EmptyState title="No capacity requests yet" text="Create a request after liquidity has been deposited into the vault." />}
+                )) : <EmptyState title="No capacity requests yet" text="Create a request after liquidity has been supplied into the vault." />}
               </div>
             </div>
 
@@ -556,7 +551,7 @@ export default function Home() {
                 {dashboard.activity.length ? dashboard.activity.map((event) => (
                   <div key={event.id}>
                     <span><Landmark size={16} /></span>
-                    <p>{event.label}<strong>{event.amount ? ` ${money(event.amount)} ${event.asset ?? ""}` : ""}</strong></p>
+                    <p>{event.label}<strong>{event.amount ? ` ${assetAmount(event.amount, event.asset ?? DEFAULT_ASSET)}` : ""}</strong></p>
                   </div>
                 )) : <EmptyState title="No activity yet" text="Actions you take in the product will appear here." />}
               </div>
@@ -598,6 +593,18 @@ function money(value: number) {
     currency: "USD",
     maximumFractionDigits: 0,
   }).format(value);
+}
+
+function assetAmount(value: number, asset: string) {
+  if (asset.toUpperCase() === "CKB") {
+    return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value)} CKB`;
+  }
+  return money(value);
+}
+
+function shortHash(hash: string) {
+  if (hash.length <= 18) return hash;
+  return `${hash.slice(0, 8)}...${hash.slice(-8)}`;
 }
 
 function shortAddress(address: string) {

@@ -3,6 +3,8 @@ import {
   getJoyIDLockScript,
   initConfig,
   signChallenge,
+  signTransaction,
+  type CKBTransaction,
   type ConnectResponseData,
   type SignChallengeResponseData,
 } from "@joyid/ckb";
@@ -21,6 +23,18 @@ export type ConnectedCkbWallet = {
 
 export type CkbWalletProof = ConnectedCkbWallet & {
   signature: string;
+};
+
+export type SupplyTransactionRequest = {
+  asset: string;
+  amount: number;
+  to: string;
+};
+
+export type SignedSupplyTransaction = {
+  tx: CKBTransaction;
+  txHash: string | null;
+  memo: string;
 };
 
 const network = (process.env.NEXT_PUBLIC_CKB_NETWORK === "mainnet" ? "mainnet" : "testnet") as
@@ -59,6 +73,120 @@ export async function signCkbChallenge(challengeMessage: string, wallet: Connect
   return {
     ...wallet,
     signature: encodeSignatureProof(signed),
+  };
+}
+
+export async function signSupplyTransaction(
+  wallet: ConnectedCkbWallet,
+  request: SupplyTransactionRequest,
+): Promise<SignedSupplyTransaction> {
+  configureJoyID();
+
+  const asset = request.asset.trim().toUpperCase();
+  if (asset !== "CKB") {
+    throw new Error("Direct wallet supply is currently enabled for CKB vault transactions.");
+  }
+  if (!request.to.trim()) {
+    throw new Error("Vault CKB address is not configured.");
+  }
+  if (!Number.isFinite(request.amount) || request.amount <= 0) {
+    throw new Error("Supply amount must be greater than zero.");
+  }
+
+  const memo = `LiquidLane supply ${asset} ${request.amount} from ${wallet.ckbAddress}`;
+  const tx = await signTransaction(
+    {
+      from: wallet.ckbAddress,
+      to: request.to.trim(),
+      amount: String(request.amount),
+      data: memo,
+    },
+    {
+      name: "LiquidLane",
+      network,
+      joyidAppURL,
+      joyidServerURL,
+      rpcURL,
+      timeoutInSeconds: 120,
+    },
+  );
+  const txHash = await broadcastCkbTransaction(tx);
+
+  return {
+    tx: { ...tx, hash: txHash },
+    txHash,
+    memo,
+  };
+}
+
+async function broadcastCkbTransaction(tx: CKBTransaction): Promise<string> {
+  if (!rpcURL?.trim()) {
+    throw new Error("CKB RPC URL is not configured for broadcasting supply transactions.");
+  }
+
+  const response = await fetch(rpcURL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      id: Date.now(),
+      jsonrpc: "2.0",
+      method: "send_transaction",
+      params: [toRpcTransaction(tx), "passthrough"],
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`CKB RPC rejected the transaction with HTTP ${response.status}.`);
+  }
+
+  const body = (await response.json()) as { result?: string; error?: { message?: string } };
+  if (body.error) {
+    throw new Error(body.error.message ?? "CKB RPC rejected the transaction.");
+  }
+  if (!body.result) {
+    throw new Error("CKB RPC did not return a transaction hash.");
+  }
+  return body.result;
+}
+
+type RpcScript = {
+  code_hash: string;
+  hash_type: string;
+  args: string;
+};
+
+function toRpcTransaction(tx: CKBTransaction) {
+  return {
+    version: tx.version,
+    cell_deps: tx.cellDeps.map((dep) => ({
+      out_point: {
+        tx_hash: dep.outPoint.txHash,
+        index: dep.outPoint.index,
+      },
+      dep_type: dep.depType === "depGroup" ? "dep_group" : dep.depType,
+    })),
+    header_deps: tx.headerDeps,
+    inputs: tx.inputs.map((input) => ({
+      previous_output: {
+        tx_hash: input.previousOutput.txHash,
+        index: input.previousOutput.index,
+      },
+      since: input.since,
+    })),
+    outputs: tx.outputs.map((output) => ({
+      capacity: output.capacity,
+      lock: toRpcScript(output.lock),
+      ...(output.type ? { type: toRpcScript(output.type) } : {}),
+    })),
+    outputs_data: tx.outputsData,
+    witnesses: tx.witnesses,
+  };
+}
+
+function toRpcScript(script: { codeHash: string; hashType: string; args: string }): RpcScript {
+  return {
+    code_hash: script.codeHash,
+    hash_type: script.hashType,
+    args: script.args,
   };
 }
 
