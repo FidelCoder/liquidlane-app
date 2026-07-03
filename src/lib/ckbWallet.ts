@@ -3,6 +3,7 @@ import {
   getJoyIDLockScript,
   initConfig,
   signChallenge,
+  signRawTransaction,
   signTransaction,
   type CKBTransaction,
   type ConnectResponseData,
@@ -38,23 +39,23 @@ export type SignedSupplyTransaction = {
   memo: string;
 };
 
-const network = (process.env.NEXT_PUBLIC_CKB_NETWORK === "mainnet" ? "mainnet" : "testnet") as
+export const ckbNetwork = (process.env.NEXT_PUBLIC_CKB_NETWORK === "mainnet" ? "mainnet" : "testnet") as
   | "mainnet"
   | "testnet";
 
-const joyidAppURL = process.env.NEXT_PUBLIC_JOYID_APP_URL ?? (network === "mainnet" ? "https://app.joy.id" : "https://testnet.joyid.dev");
-const joyidServerURL = process.env.NEXT_PUBLIC_JOYID_SERVER_URL ?? (network === "mainnet" ? "https://api.joy.id/api/v1" : "https://api.testnet.joyid.dev/api/v1");
-const rpcURL = process.env.NEXT_PUBLIC_CKB_RPC_URL;
+const joyidAppURL = process.env.NEXT_PUBLIC_JOYID_APP_URL ?? (ckbNetwork === "mainnet" ? "https://app.joy.id" : "https://testnet.joyid.dev");
+const joyidServerURL = process.env.NEXT_PUBLIC_JOYID_SERVER_URL ?? (ckbNetwork === "mainnet" ? "https://api.joy.id/api/v1" : "https://api.testnet.joyid.dev/api/v1");
+export const ckbRpcURL = process.env.NEXT_PUBLIC_CKB_RPC_URL;
 
 export async function connectCkbWallet(): Promise<ConnectedCkbWallet> {
   configureJoyID();
 
   const connection = await connect({
     name: "LiquidLane",
-    network,
+    network: ckbNetwork,
     joyidAppURL,
     joyidServerURL,
-    rpcURL,
+    rpcURL: ckbRpcURL,
   });
 
   return walletFromConnection(connection);
@@ -65,10 +66,10 @@ export async function signCkbChallenge(challengeMessage: string, wallet: Connect
 
   const signed = await signChallenge(challengeMessage, wallet.ckbAddress, {
     name: "LiquidLane",
-    network,
+    network: ckbNetwork,
     joyidAppURL,
     joyidServerURL,
-    rpcURL,
+    rpcURL: ckbRpcURL,
   });
 
   return {
@@ -104,10 +105,10 @@ export async function signSupplyTransaction(
     },
     {
       name: "LiquidLane",
-      network,
+      network: ckbNetwork,
       joyidAppURL,
       joyidServerURL,
-      rpcURL,
+      rpcURL: ckbRpcURL,
       timeoutInSeconds: 120,
     },
   );
@@ -120,12 +121,31 @@ export async function signSupplyTransaction(
   };
 }
 
-async function broadcastCkbTransaction(tx: CKBTransaction): Promise<string> {
-  if (!rpcURL?.trim()) {
+
+export async function signRawCkbTransaction(
+  wallet: ConnectedCkbWallet,
+  tx: CKBTransaction,
+  witnessIndexes = [0],
+): Promise<CKBTransaction> {
+  configureJoyID();
+
+  return signRawTransaction(tx, wallet.ckbAddress, {
+    name: "LiquidLane",
+    network: ckbNetwork,
+    joyidAppURL,
+    joyidServerURL,
+    rpcURL: ckbRpcURL,
+    witnessIndexes,
+    timeoutInSeconds: 300,
+  });
+}
+
+export async function broadcastCkbTransaction(tx: CKBTransaction): Promise<string> {
+  if (!ckbRpcURL?.trim()) {
     throw new Error("CKB RPC URL is not configured for broadcasting supply transactions.");
   }
 
-  const response = await fetch(rpcURL, {
+  const response = await fetch(ckbRpcURL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -194,10 +214,10 @@ function toRpcScript(script: { codeHash: string; hashType: string; args: string 
 function configureJoyID() {
   initConfig({
     name: "LiquidLane",
-    network,
+    network: ckbNetwork,
     joyidAppURL,
     joyidServerURL,
-    rpcURL,
+    rpcURL: ckbRpcURL,
   });
 }
 
@@ -206,7 +226,7 @@ function walletFromConnection(connection: ConnectResponseData): ConnectedCkbWall
   return {
     ckbAddress,
     walletType: "joyid_ckb",
-    lockScript: toBackendScript(getJoyIDLockScript(network === "mainnet")),
+    lockScript: toBackendScript(getJoyIDLockScript(ckbNetwork === "mainnet")),
   };
 }
 

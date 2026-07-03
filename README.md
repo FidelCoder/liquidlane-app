@@ -33,8 +33,15 @@ The app uses JoyID on CKB:
 Capacity starts as `requested`. Opening a channel sends the request to LiquidLane Core, which either submits `open_channel` to a configured Fiber node or keeps the request in `pending_fiber_channel`. The UI does not invent channel ids.
 
 Set `NEXT_PUBLIC_API_BASE_URL` if LiquidLane Core is not running on `http://localhost:8080`.
-Set `NEXT_PUBLIC_CKB_RPC_URL` to a CKB RPC endpoint that accepts `send_transaction`.
+Set `NEXT_PUBLIC_CKB_RPC_URL` to a CKB RPC endpoint that accepts `get_cells` and `send_transaction`.
+Set `NEXT_PUBLIC_CKB_EXPLORER_URL` to the CKB testnet explorer base URL used for deployment links.
 The vault address is loaded from LiquidLane Core through `/vault`; configure it on the backend.
+
+## Testnet Script Deployment
+
+Operators can deploy LiquidLane CKB script binaries from the app with JoyID. Core serves the compiled script package from `/deployment/package`; the app collects funded JoyID cells through CKB RPC, asks JoyID to sign a raw transaction, broadcasts it, and shows the deployment transaction plus code-cell out-points.
+
+This keeps deployer keys inside JoyID. The app does not ask for private keys or mnemonics.
 
 ## Checks
 

@@ -202,6 +202,33 @@ h3 { font-size: 1.24rem; line-height: 1.1; margin-bottom: 10px; }
 .product-grid { display: grid; gap: 16px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .focused-grid { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
 .product-grid article { padding: 24px; }
+.deployment-card { display: grid; gap: 14px; }
+.deployment-summary, .deployment-record { display: grid; gap: 10px; }
+.deployment-summary div, .deployment-record > div:not(.script-records) {
+  border-top: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  padding-top: 12px;
+}
+.deployment-record a {
+  align-items: center;
+  color: var(--accent-strong);
+  display: inline-flex;
+  gap: 6px;
+  text-decoration: none;
+}
+.script-records { display: grid; gap: 8px; }
+.script-records > div {
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+}
+.script-records strong { overflow-wrap: anywhere; }
+.script-records code { width: fit-content; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+
 .disabled-card { opacity: 0.78; }
 .stack-form { display: grid; gap: 12px; margin-top: 16px; }
 .compact-note { font-size: 0.9rem; line-height: 1.45; margin: 12px 0 0; }

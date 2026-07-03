@@ -7,6 +7,8 @@ import {
   CheckCircle2,
   CircleDollarSign,
   Landmark,
+  ExternalLink,
+  FileCode2,
   Loader2,
   LogOut,
   RadioTower,
@@ -14,9 +16,11 @@ import {
   Route,
   ShieldCheck,
   Sparkles,
+  UploadCloud,
   UserRound,
   Waves,
 } from "lucide-react";
+import { deployCkbScripts, type DeploymentResult } from "@/lib/ckbDeployment";
 import { connectCkbWallet, signSupplyTransaction, type ConnectedCkbWallet } from "@/lib/ckbWallet";
 
 type Role = "lp" | "merchant" | "operator";
@@ -245,6 +249,7 @@ export default function Home() {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [activeVault, setActiveVault] = useState<VaultConfig | null>(null);
   const [quote, setQuote] = useState<LiquidityQuote | null>(null);
+  const [deployment, setDeployment] = useState<DeploymentResult | null>(null);
   const [wallet, setWallet] = useState<ConnectedCkbWallet | null>(null);
   const [ckbAddress, setCkbAddress] = useState<string | null>(null);
   const [selectedRole, setSelectedRole] = useState<Role | null>(null);
@@ -398,6 +403,7 @@ export default function Home() {
     setCkbAddress(null);
     setDashboard(null);
     setQuote(null);
+    setDeployment(null);
     setSelectedRole(null);
     setStatus("Signed out. Connect a CKB wallet to choose a service.");
   }
@@ -509,6 +515,32 @@ export default function Home() {
     }
   }
 
+  async function deployScriptsToTestnet() {
+    setBusy("deploy-scripts");
+    try {
+      let activeWallet = wallet;
+      if (!activeWallet) {
+        setStatus("Reconnect your CKB wallet to sign the deployment transaction.");
+        activeWallet = await connectCkbWallet();
+        if (dashboard?.user.ckb_address && activeWallet.ckbAddress !== dashboard.user.ckb_address) {
+          throw new Error("Connected wallet does not match this LiquidLane session.");
+        }
+        setWallet(activeWallet);
+        setCkbAddress(activeWallet.ckbAddress);
+        window.localStorage.setItem(ADDRESS_KEY, activeWallet.ckbAddress);
+      }
+
+      setStatus("Preparing CKB script deployment package.");
+      const result = await deployCkbScripts(API_BASE, activeWallet);
+      setDeployment(result);
+      setStatus(`Deployment broadcast ${shortHash(result.txHash)}. Track it on CKB testnet explorer.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "CKB script deployment failed.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   const vault = dashboard?.vault ?? activeVault;
   const vaultSummary = dashboard?.vault;
   const hasWalletSession = Boolean(wallet || dashboard);
@@ -519,6 +551,7 @@ export default function Home() {
   }, [vaultSummary]);
   const showSupply = dashboard?.user.role === "lp" || dashboard?.user.role === "operator";
   const showRequest = dashboard?.user.role === "merchant" || dashboard?.user.role === "operator";
+  const showDeploy = dashboard?.user.role === "operator";
   const vaultReady = Boolean(vault?.configured && vault.address);
   const claimableFees = dashboard?.positions.reduce((total, position) => total + Math.max(position.fees_earned - position.fees_claimed, 0), 0) ?? 0;
 
@@ -660,6 +693,42 @@ export default function Home() {
                   <Metric label="Routing fee" value={`${quote.routing_fee_bps} bps`} />
                   <div className="status-tag" data-status={quote.available ? "available" : "failed"}>{quote.available ? "available" : "insufficient"}</div>
                 </div>
+              </article>
+            ) : null}
+
+            {showDeploy ? (
+              <article className="deployment-card">
+                <span className="icon"><UploadCloud size={20} /></span>
+                <h2>Deploy CKB scripts</h2>
+                <div className="deployment-summary">
+                  <Metric label="Network" value={vault?.network ?? "testnet"} />
+                  <Metric label="Package" value="5 scripts" />
+                  <Metric label="Signer" value={ckbAddress ? shortAddress(ckbAddress) : "JoyID"} />
+                </div>
+                <button type="button" onClick={deployScriptsToTestnet} disabled={busy === "deploy-scripts"}>
+                  {busy === "deploy-scripts" ? <Loader2 className="spin" size={16} /> : <FileCode2 size={16} />} Deploy to testnet
+                </button>
+                {deployment ? (
+                  <div className="deployment-record">
+                    <div>
+                      <span>Transaction</span>
+                      <a href={deployment.explorerUrl} target="_blank" rel="noreferrer"><ExternalLink size={14} /> {shortHash(deployment.txHash)}</a>
+                    </div>
+                    <div>
+                      <span>Capacity</span>
+                      <strong>{deployment.deployedCkb}</strong>
+                    </div>
+                    <div className="script-records">
+                      {deployment.scripts.map((script) => (
+                        <div key={script.name}>
+                          <strong>{script.name}</strong>
+                          <code>{shortHash(script.outPoint)}</code>
+                          <code>{shortHash(script.codeHash)}</code>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
               </article>
             ) : null}
           </section>
