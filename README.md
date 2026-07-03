@@ -14,6 +14,10 @@ npm run dev
 
 The app runs at `http://localhost:3000` by default.
 
+## Product Entry
+
+The first screen is a landing page with wallet connect in the top bar. After a CKB wallet is connected, users choose a LiquidLane service: supply liquidity, request receive capacity, or operate lanes. The selected service creates the signed Core session and opens the live workspace.
+
 ## CKB Wallet Auth
 
 The app uses JoyID on CKB:
