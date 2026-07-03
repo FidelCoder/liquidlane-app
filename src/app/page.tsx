@@ -10,6 +10,7 @@ import {
   Loader2,
   LogOut,
   RadioTower,
+  ReceiptText,
   Route,
   ShieldCheck,
   Sparkles,
@@ -34,11 +35,20 @@ type AuthResponse = {
   user: UserProfile;
 };
 
+type VaultScripts = {
+  vault_lock_code_hash: string | null;
+  vault_type_code_hash: string | null;
+  lp_receipt_type_code_hash: string | null;
+  request_type_code_hash: string | null;
+  fee_claim_type_code_hash: string | null;
+};
+
 type VaultConfig = {
   asset: string;
   address: string | null;
   network: string;
   configured: boolean;
+  scripts?: VaultScripts;
 };
 
 type VaultSummary = VaultConfig & {
@@ -60,6 +70,89 @@ type Deposit = {
   amount: number;
   tx_hash: string | null;
   created_at: string;
+};
+
+type IntentStatus = "pending_signature" | "settled" | "expired" | "cancelled";
+type PositionStatus = "active" | "closed";
+type ReservationStatus = "reserved" | "deployed" | "released" | "failed";
+
+type SupplyIntent = {
+  id: string;
+  lp_id: string;
+  lp_name: string;
+  ckb_address: string;
+  asset: string;
+  amount: number;
+  vault_address: string;
+  receipt_cell_id: string;
+  memo: string;
+  status: IntentStatus;
+  tx_hash: string | null;
+  created_at: string;
+  expires_at: string;
+};
+
+type LpPosition = {
+  id: string;
+  lp_id: string;
+  lp_name: string;
+  ckb_address: string;
+  asset: string;
+  supplied_amount: number;
+  available_amount: number;
+  reserved_amount: number;
+  deployed_amount: number;
+  fees_earned: number;
+  fees_claimed: number;
+  receipt_cell_id: string;
+  supply_tx_hash: string;
+  status: PositionStatus;
+  created_at: string;
+  updated_at: string;
+};
+
+type CapacityReservation = {
+  id: string;
+  request_id: string;
+  merchant_id: string;
+  merchant_name: string;
+  ckb_address: string;
+  asset: string;
+  amount: number;
+  lease_fee: number;
+  request_cell_id: string;
+  status: ReservationStatus;
+  created_at: string;
+  updated_at: string;
+};
+
+type WithdrawalIntent = {
+  id: string;
+  lp_id: string;
+  lp_name: string;
+  ckb_address: string;
+  position_id: string;
+  asset: string;
+  amount: number;
+  receipt_cell_id: string;
+  memo: string;
+  status: IntentStatus;
+  tx_hash: string | null;
+  created_at: string;
+  expires_at: string;
+};
+
+type FeeClaim = {
+  id: string;
+  lp_id: string;
+  position_id: string;
+  asset: string;
+  amount: number;
+  memo: string;
+  status: IntentStatus;
+  tx_hash: string | null;
+  created_at: string;
+  expires_at: string;
 };
 
 type LiquidityRequest = {
@@ -102,7 +195,11 @@ type Dashboard = {
   user: UserProfile;
   vault: VaultSummary;
   deposits: Deposit[];
+  positions: LpPosition[];
   liquidity_requests: LiquidityRequest[];
+  reservations: CapacityReservation[];
+  withdrawals: WithdrawalIntent[];
+  fee_claims: FeeClaim[];
   activity: ActivityEvent[];
 };
 
@@ -310,28 +407,53 @@ export default function Home() {
     const form = new FormData(event.currentTarget);
     const amount = Number(form.get("amount"));
     const asset = String(form.get("asset") ?? DEFAULT_ASSET).trim().toUpperCase();
-    const vaultAddress = activeVault?.address?.trim() ?? "";
     setBusy("deposit");
     try {
-      if (!wallet) {
-        throw new Error("Reconnect your CKB wallet before supplying liquidity.");
+      if (!Number.isFinite(amount) || amount <= 0) {
+        throw new Error("Supply amount must be greater than zero.");
       }
-      if (!activeVault?.configured || !vaultAddress) {
+      if (!activeVault?.configured || !activeVault.address?.trim()) {
         throw new Error("LiquidLane vault is not configured yet.");
       }
-      setStatus("Confirm the supply transaction in your CKB wallet.");
-      const signed = await signSupplyTransaction(wallet, { asset, amount, to: vaultAddress });
+
+      let activeWallet = wallet;
+      if (!activeWallet) {
+        setStatus("Reconnect your CKB wallet to sign the supply transaction.");
+        activeWallet = await connectCkbWallet();
+        if (dashboard?.user.ckb_address && activeWallet.ckbAddress !== dashboard.user.ckb_address) {
+          throw new Error("Connected wallet does not match this LiquidLane session.");
+        }
+        setWallet(activeWallet);
+        setCkbAddress(activeWallet.ckbAddress);
+        window.localStorage.setItem(ADDRESS_KEY, activeWallet.ckbAddress);
+      }
+
+      setStatus("Preparing the vault supply intent.");
+      const intent = await request<SupplyIntent>("/vault/supply/intents", {
+        method: "POST",
+        body: JSON.stringify({ asset, amount }),
+      });
+
+      setStatus("Confirm the vault transaction in your CKB wallet.");
+      const signed = await signSupplyTransaction(activeWallet, {
+        asset,
+        amount,
+        to: intent.vault_address,
+        memo: intent.memo,
+      });
+
       await request<Deposit>("/deposits", {
         method: "POST",
         body: JSON.stringify({
           asset,
           amount,
+          intent_id: intent.id,
           tx_hash: signed.txHash,
           signed_tx: signed.tx,
         }),
       });
       event.currentTarget.reset();
-      setStatus(`Supplied ${assetAmount(amount, asset)} to the LiquidLane vault${signed.txHash ? ` (${shortHash(signed.txHash)})` : ""}.`);
+      setStatus(`Supplied ${assetAmount(amount, asset)} to ${shortAddress(intent.vault_address)}${signed.txHash ? ` (${shortHash(signed.txHash)})` : ""}.`);
       await refresh();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Supply failed.");
@@ -344,7 +466,7 @@ export default function Home() {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const payload = {
-      asset: form.get("asset"),
+      asset: String(form.get("asset") ?? DEFAULT_ASSET).trim().toUpperCase(),
       amount: Number(form.get("amount")),
       duration_days: Number(form.get("duration_days")),
       fiber_peer_pubkey: blankToUndefined(form.get("fiber_peer_pubkey")),
@@ -398,6 +520,7 @@ export default function Home() {
   const showSupply = dashboard?.user.role === "lp" || dashboard?.user.role === "operator";
   const showRequest = dashboard?.user.role === "merchant" || dashboard?.user.role === "operator";
   const vaultReady = Boolean(vault?.configured && vault.address);
+  const claimableFees = dashboard?.positions.reduce((total, position) => total + Math.max(position.fees_earned - position.fees_claimed, 0), 0) ?? 0;
 
   return (
     <main className="app-shell">
@@ -491,6 +614,7 @@ export default function Home() {
               <Metric label="Reserved" value={assetAmount(vaultSummary?.reserved_liquidity ?? 0, vault?.asset ?? DEFAULT_ASSET)} />
               <Metric label="Pending Fiber" value={assetAmount(vaultSummary?.pending_channel_liquidity ?? 0, vault?.asset ?? DEFAULT_ASSET)} />
               <Metric label="Channel open" value={assetAmount(vaultSummary?.deployed_liquidity ?? 0, vault?.asset ?? DEFAULT_ASSET)} />
+              <Metric label="Fees earned" value={assetAmount(vaultSummary?.fees_earned ?? 0, vault?.asset ?? DEFAULT_ASSET)} />
               <Metric label="LPs" value={String(vaultSummary?.lp_count ?? 0)} />
             </div>
           </div>
@@ -503,8 +627,9 @@ export default function Home() {
                 <form className="stack-form" onSubmit={handleDeposit}>
                   <label>Asset<input name="asset" value={vault?.asset ?? DEFAULT_ASSET} readOnly required /></label>
                   <label>Amount<input name="amount" type="number" min="1" step="1" placeholder="100" required /></label>
-                  <button type="submit" disabled={busy === "deposit" || !wallet || !vaultReady}>{busy === "deposit" ? <Loader2 className="spin" size={16} /> : <Banknote size={16} />} Confirm supply</button>
+                  <button type="submit" disabled={busy === "deposit" || !vaultReady}>{busy === "deposit" ? <Loader2 className="spin" size={16} /> : <Banknote size={16} />} Confirm supply</button>
                 </form>
+                {vaultReady && vault?.address ? <p className="muted compact-note">Active vault <code>{shortAddress(vault.address)}</code></p> : null}
                 {!vaultReady ? <p className="muted compact-note">Vault setup is pending on Core.</p> : null}
               </article>
             ) : null}
@@ -537,6 +662,100 @@ export default function Home() {
                 </div>
               </article>
             ) : null}
+          </section>
+
+          <section className="accounting-grid" aria-label="Vault accounting">
+            <div className="table-panel">
+              <div className="section-title">
+                <div>
+                  <p className="eyebrow">Vault positions</p>
+                  <h2>LP receipts</h2>
+                </div>
+                <span>{dashboard.positions.length} active</span>
+              </div>
+              <div className="position-list">
+                {dashboard.positions.length ? dashboard.positions.map((position) => (
+                  <div className="position-card" key={position.id}>
+                    <div className="position-main">
+                      <span className="icon"><ReceiptText size={18} /></span>
+                      <div>
+                        <strong>{position.lp_name}</strong>
+                        <span>{assetAmount(position.supplied_amount, position.asset)} supplied</span>
+                        <code>{shortId(position.receipt_cell_id)}</code>
+                      </div>
+                    </div>
+                    <div className="position-metrics">
+                      <Metric label="Available" value={assetAmount(position.available_amount, position.asset)} />
+                      <Metric label="Reserved" value={assetAmount(position.reserved_amount, position.asset)} />
+                      <Metric label="Deployed" value={assetAmount(position.deployed_amount, position.asset)} />
+                      <Metric label="Claimable fees" value={assetAmount(Math.max(position.fees_earned - position.fees_claimed, 0), position.asset)} />
+                    </div>
+                    <div className="position-footer">
+                      <span className="status-tag" data-status={position.status}>{statusLabel(position.status)}</span>
+                      <code>{shortHash(position.supply_tx_hash)}</code>
+                    </div>
+                  </div>
+                )) : <EmptyState title="No LP positions" text="Supply liquidity to create a receipt-backed vault position." />}
+              </div>
+            </div>
+
+            <div className="table-panel">
+              <div className="section-title">
+                <div>
+                  <p className="eyebrow">Reservations</p>
+                  <h2>Capacity locked</h2>
+                </div>
+                <span>{dashboard.reservations.length} total</span>
+              </div>
+              <div className="state-list">
+                {dashboard.reservations.length ? dashboard.reservations.map((reservation) => (
+                  <div className="state-row" key={reservation.id}>
+                    <div>
+                      <strong>{reservation.merchant_name}</strong>
+                      <span>{assetAmount(reservation.amount, reservation.asset)} capacity · fee {assetAmount(reservation.lease_fee, reservation.asset)}</span>
+                      <code>{shortId(reservation.request_cell_id)}</code>
+                    </div>
+                    <span className="status-tag" data-status={reservation.status}>{statusLabel(reservation.status)}</span>
+                  </div>
+                )) : <EmptyState title="No reservations" text="Merchant capacity requests reserve live vault liquidity here." />}
+              </div>
+            </div>
+
+            <div className="table-panel">
+              <div className="section-title">
+                <div>
+                  <p className="eyebrow">Settlement</p>
+                  <h2>Claims and exits</h2>
+                </div>
+                <span>{assetAmount(claimableFees, vault?.asset ?? DEFAULT_ASSET)} claimable</span>
+              </div>
+              <div className="state-list">
+                {dashboard.withdrawals.length || dashboard.fee_claims.length ? (
+                  <>
+                    {dashboard.withdrawals.map((withdrawal) => (
+                      <div className="state-row" key={withdrawal.id}>
+                        <div>
+                          <strong>{withdrawal.lp_name}</strong>
+                          <span>Withdrawal · {assetAmount(withdrawal.amount, withdrawal.asset)}</span>
+                          <code>{shortId(withdrawal.receipt_cell_id)}</code>
+                        </div>
+                        <span className="status-tag" data-status={withdrawal.status}>{statusLabel(withdrawal.status)}</span>
+                      </div>
+                    ))}
+                    {dashboard.fee_claims.map((claim) => (
+                      <div className="state-row" key={claim.id}>
+                        <div>
+                          <strong>Fee claim</strong>
+                          <span>{assetAmount(claim.amount, claim.asset)}</span>
+                          <code>{shortId(claim.position_id)}</code>
+                        </div>
+                        <span className="status-tag" data-status={claim.status}>{statusLabel(claim.status)}</span>
+                      </div>
+                    ))}
+                  </>
+                ) : <EmptyState title="No settlement intents" text="Withdrawal and fee-claim intents appear after positions earn or exit liquidity." />}
+              </div>
+            </div>
           </section>
 
           <section className="split-section" id="lifecycle">
@@ -638,6 +857,11 @@ function shortHash(hash: string) {
   return `${hash.slice(0, 8)}...${hash.slice(-8)}`;
 }
 
+function shortId(id: string) {
+  if (id.length <= 22) return id;
+  return `${id.slice(0, 12)}...${id.slice(-8)}`;
+}
+
 function shortAddress(address: string) {
   if (address.length <= 18) return address;
   return `${address.slice(0, 8)}...${address.slice(-6)}`;
@@ -653,7 +877,7 @@ function serviceLabel(role: Role) {
   return services.find((service) => service.role === role)?.title ?? role;
 }
 
-function statusLabel(status: LiquidityStatus) {
+function statusLabel(status: string) {
   return status.replaceAll("_", " ");
 }
 

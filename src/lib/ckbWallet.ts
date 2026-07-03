@@ -29,6 +29,7 @@ export type SupplyTransactionRequest = {
   asset: string;
   amount: number;
   to: string;
+  memo?: string;
 };
 
 export type SignedSupplyTransaction = {
@@ -93,7 +94,7 @@ export async function signSupplyTransaction(
     throw new Error("Supply amount must be greater than zero.");
   }
 
-  const memo = `LiquidLane supply ${asset} ${request.amount} from ${wallet.ckbAddress}`;
+  const memo = request.memo?.trim() || `LiquidLane supply ${asset} ${request.amount} from ${wallet.ckbAddress}`;
   const tx = await signTransaction(
     {
       from: wallet.ckbAddress,
