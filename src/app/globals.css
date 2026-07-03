@@ -207,6 +207,20 @@ h3 { font-size: 1.24rem; line-height: 1.1; margin-bottom: 10px; }
 .compact-note { font-size: 0.9rem; line-height: 1.45; margin: 12px 0 0; }
 .form-row { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr) 100px; }
 
+.accounting-grid { display: grid; gap: 16px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.position-list, .state-list { display: grid; gap: 12px; }
+.position-card, .state-row { border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
+.position-card { display: grid; gap: 14px; }
+.position-main { align-items: flex-start; display: flex; gap: 12px; }
+.position-main > div, .state-row > div { display: grid; gap: 6px; min-width: 0; }
+.position-main span:not(.icon), .state-row span, .position-footer code { color: var(--muted); }
+.position-main code, .state-row code, .position-footer code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.position-metrics { display: grid; gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.position-metrics div { background: var(--surface-soft); border: 1px solid var(--line); border-radius: 8px; display: grid; gap: 4px; padding: 10px; }
+.position-metrics span { color: var(--muted); font-size: 0.82rem; }
+.position-metrics strong { font-size: 0.96rem; }
+.position-footer, .state-row { align-items: center; display: flex; gap: 12px; justify-content: space-between; }
+.state-row strong, .position-main strong { overflow-wrap: anywhere; }
 .split-section { display: grid; gap: 16px; grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr); }
 .table-panel { padding: 24px; }
 .section-title { align-items: flex-start; display: flex; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
@@ -235,9 +249,10 @@ code { background: #eef2ee; border-radius: 6px; font-size: 0.78rem; padding: 6px
   text-transform: capitalize;
   width: fit-content;
 }
-.status-tag[data-status="available"], .status-tag[data-status="channel_open"] { background: rgba(24, 135, 90, 0.14); color: var(--green); }
-.status-tag[data-status="pending_fiber_channel"] { background: rgba(8, 132, 124, 0.14); color: var(--accent-strong); }
-.status-tag[data-status="failed"] { background: rgba(184, 71, 71, 0.14); color: var(--red); }
+.status-tag[data-status="available"], .status-tag[data-status="channel_open"], .status-tag[data-status="active"], .status-tag[data-status="deployed"], .status-tag[data-status="settled"] { background: rgba(24, 135, 90, 0.14); color: var(--green); }
+.status-tag[data-status="pending_fiber_channel"], .status-tag[data-status="pending_signature"] { background: rgba(8, 132, 124, 0.14); color: var(--accent-strong); }
+.status-tag[data-status="released"] { background: rgba(75, 126, 164, 0.14); color: var(--blue); }
+.status-tag[data-status="failed"], .status-tag[data-status="closed"], .status-tag[data-status="expired"], .status-tag[data-status="cancelled"] { background: rgba(184, 71, 71, 0.14); color: var(--red); }
 .error-text { color: var(--red) !important; }
 .activity-list > div { align-items: flex-start; border-bottom: 1px solid var(--line); display: grid; gap: 10px; grid-template-columns: 28px 1fr; padding: 12px 0; }
 .activity-list > div:last-child { border-bottom: 0; }
@@ -252,7 +267,7 @@ code { background: #eef2ee; border-radius: 6px; font-size: 0.78rem; padding: 6px
 @keyframes spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 980px) {
-  .landing-content, .section-heading, .service-grid, .product-grid, .split-section { grid-template-columns: 1fr; }
+  .landing-content, .section-heading, .service-grid, .product-grid, .accounting-grid, .split-section { grid-template-columns: 1fr; }
   .landing-content { align-items: start; padding-bottom: 120px; }
   .hero-metrics { max-width: 420px; }
   .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -265,6 +280,7 @@ code { background: #eef2ee; border-radius: 6px; font-size: 0.78rem; padding: 6px
   .section-heading { margin-top: -54px; }
   .service-card, .operation-panel, .product-grid article, .table-panel { padding: 20px; }
   .request-card { grid-template-columns: 1fr; }
+  .position-footer, .state-row { align-items: flex-start; flex-direction: column; }
   .request-card div:last-child { justify-items: start; }
   .form-row, .metric-grid { grid-template-columns: 1fr; }
   h1 { font-size: clamp(2.35rem, 3.25rem, 4rem); }

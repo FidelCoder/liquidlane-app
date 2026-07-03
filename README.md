@@ -25,8 +25,8 @@ The app uses JoyID on CKB:
 1. Connect JoyID and read the CKB address.
 2. Choose a service and open a Core wallet session.
 3. Sign only when confirming a value-moving action.
-4. Supplying liquidity signs and broadcasts a CKB transaction to the active vault returned by Core.
-5. Core records the deposit only after receiving the broadcast transaction hash and signed transaction proof.
+4. Supplying liquidity first creates a Core vault intent with the active vault address and memo.
+5. The wallet signs and broadcasts that CKB transaction, then Core settles the intent into an LP position after receiving the transaction hash and signed transaction proof.
 
 ## Fiber Lifecycle
 
