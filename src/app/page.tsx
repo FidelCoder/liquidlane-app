@@ -344,9 +344,7 @@ export default function Home() {
     const savedToken = window.localStorage.getItem(TOKEN_KEY);
     if (savedAddress) {
       setCkbAddress(savedAddress);
-      if (!savedToken) {
-        setStatus("Wallet restored. Choose the service you want to use.");
-      }
+      if (!savedToken) setStatus("Wallet address restored. Reconnect JoyID when a service needs a signature.");
     }
     if (savedToken) {
       setToken(savedToken);
@@ -357,11 +355,12 @@ export default function Home() {
   async function connectWallet() {
     setBusy("connect");
     try {
+      setStatus(ckbAddress ? "Opening JoyID to reconnect your signer." : "Opening JoyID wallet.");
       const connected = await connectCkbWallet();
       setWallet(connected);
       setCkbAddress(connected.ckbAddress);
       window.localStorage.setItem(ADDRESS_KEY, connected.ckbAddress);
-      setStatus("Wallet connected. Choose the service you want to use.");
+      setStatus("JoyID connected. Choose the service you want to use.");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not connect CKB wallet.");
     } finally {
@@ -371,6 +370,11 @@ export default function Home() {
 
   async function enterService(role: Role) {
     setSelectedRole(role);
+    if (dashboard?.user.role === role) {
+      document.getElementById("workspace")?.scrollIntoView({ behavior: "smooth" });
+      return;
+    }
+
     setBusy(role);
     try {
       let activeWallet = wallet;
@@ -589,7 +593,12 @@ export default function Home() {
 
   const vault = dashboard?.vault ?? activeVault;
   const vaultSummary = dashboard?.vault;
-  const hasWalletSession = Boolean(wallet || dashboard || ckbAddress);
+  const hasActiveWallet = Boolean(wallet);
+  const hasSavedAddress = Boolean(ckbAddress);
+  const hasCoreSession = Boolean(dashboard || token);
+  const canBrowseServices = Boolean(hasActiveWallet || hasCoreSession);
+  const needsWalletReconnect = Boolean(hasSavedAddress && !hasActiveWallet);
+  const heroActionLabel = canBrowseServices ? "Choose service" : needsWalletReconnect ? "Reconnect wallet" : "Connect wallet";
   const utilization = useMemo(() => {
     if (!vaultSummary || vaultSummary.total_deposits === 0) return 0;
     const used = vaultSummary.reserved_liquidity + vaultSummary.pending_channel_liquidity + vaultSummary.deployed_liquidity;
@@ -612,10 +621,11 @@ export default function Home() {
           <div className="nav-actions">
             {dashboard ? <a href="#workspace">Workspace</a> : <a href="#services">Services</a>}
             <a href="#lifecycle">Lifecycle</a>
-            {hasWalletSession && ckbAddress ? (
-              <span className="connected-pill">
+            {ckbAddress ? (
+              <span className="connected-pill" data-state={hasActiveWallet ? "active" : "restored"}>
                 <UserRound size={15} />
                 <span>{shortAddress(ckbAddress)}</span>
+                <small>{hasActiveWallet ? "Ready" : "Reconnect"}</small>
                 <button
                   type="button"
                   className="copy-address-button"
@@ -627,8 +637,15 @@ export default function Home() {
                 </button>
               </span>
             ) : null}
-            {hasWalletSession ? (
-              <button type="button" className="secondary-button dark" onClick={signOut}><LogOut size={16} /> Disconnect</button>
+            {hasSavedAddress || hasCoreSession ? (
+              <div className="wallet-controls">
+                {!hasActiveWallet ? (
+                  <button type="button" onClick={connectWallet} disabled={busy === "connect"}>
+                    {busy === "connect" ? <Loader2 className="spin" size={16} /> : <UserRound size={16} />} Reconnect
+                  </button>
+                ) : null}
+                <button type="button" className="secondary-button dark" onClick={signOut}><LogOut size={16} /> Disconnect</button>
+              </div>
             ) : (
               <button type="button" onClick={connectWallet} disabled={busy === "connect"}>
                 {busy === "connect" ? <Loader2 className="spin" size={16} /> : <UserRound size={16} />} Connect wallet
@@ -643,8 +660,8 @@ export default function Home() {
             <h1>Stablecoin capacity for payment channels, ready when apps need it.</h1>
             <p className="lede">LiquidLane gives LPs, merchants, and node operators one CKB-native lane for vault liquidity, receive capacity, and Fiber channel opens.</p>
             <div className="hero-actions">
-              <button type="button" onClick={hasWalletSession ? () => document.getElementById("services")?.scrollIntoView({ behavior: "smooth" }) : connectWallet} disabled={busy === "connect"}>
-                {busy === "connect" ? <Loader2 className="spin" size={16} /> : <ArrowRight size={16} />} {hasWalletSession ? "Choose service" : "Connect wallet"}
+              <button type="button" onClick={canBrowseServices ? () => document.getElementById("services")?.scrollIntoView({ behavior: "smooth" }) : connectWallet} disabled={busy === "connect"}>
+                {busy === "connect" ? <Loader2 className="spin" size={16} /> : <ArrowRight size={16} />} {heroActionLabel}
               </button>
               <a href="#lifecycle">View lifecycle</a>
             </div>
@@ -660,13 +677,20 @@ export default function Home() {
       <section className="service-section" id="services">
         <div className="section-heading">
           <p className="eyebrow">Choose service</p>
-          <h2>{hasWalletSession ? "What do you want to do on LiquidLane?" : "Connect once, then choose the lane you need."}</h2>
+          <h2>{canBrowseServices ? "What do you want to do on LiquidLane?" : needsWalletReconnect ? "Reconnect JoyID to continue with this wallet." : "Connect once, then choose the lane you need."}</h2>
           <p className="muted">{status}</p>
         </div>
+        {needsWalletReconnect ? (
+          <div className="wallet-reconnect-note">
+            <ShieldCheck size={18} />
+            <span>Address is restored. Reconnect only when LiquidLane needs JoyID to sign a CKB transaction.</span>
+          </div>
+        ) : null}
         <div className="service-grid">
           {services.map((service) => {
             const Icon = service.icon;
             const active = selectedRole === service.role;
+            const actionLabel = dashboard?.user.role === service.role ? "Current service" : hasActiveWallet ? "Open service" : hasSavedAddress ? "Reconnect + open" : "Connect + open";
             return (
               <article className={active ? "service-card active" : "service-card"} key={service.role}>
                 <span className="icon"><Icon size={21} /></span>
@@ -677,7 +701,7 @@ export default function Home() {
                   <label>Display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Atlas LP" /></label>
                 ) : null}
                 <button type="button" onClick={() => enterService(service.role)} disabled={busy === service.role}>
-                  {busy === service.role ? <Loader2 className="spin" size={16} /> : <Sparkles size={16} />} {dashboard?.user.role === service.role ? "Current service" : hasWalletSession ? "Open service" : "Connect + open"}
+                  {busy === service.role ? <Loader2 className="spin" size={16} /> : <Sparkles size={16} />} {actionLabel}
                 </button>
               </article>
             );
