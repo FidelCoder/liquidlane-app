@@ -6,6 +6,7 @@ import {
   ckbRpcURL,
   signRawCkbTransaction,
   type ConnectedCkbWallet,
+  type JoyIdPopup,
 } from "@/lib/ckbWallet";
 
 const SHANNONS_PER_CKB = BigInt(100_000_000);
@@ -90,21 +91,37 @@ export type DeploymentResult = {
   scripts: DeploymentRecordScript[];
 };
 
-export async function deployCkbScripts(apiBase: string, wallet: ConnectedCkbWallet): Promise<DeploymentResult> {
-  const deploymentPackage = await fetchDeploymentPackage(apiBase);
-  if (deploymentPackage.network !== "testnet" || ckbNetwork !== "testnet") {
-    throw new Error("LiquidLane script deployment is currently enabled for CKB testnet only.");
-  }
+export type DeploymentProgress = "package" | "funding" | "signing" | "broadcast";
 
-  const deployerLock = addressToJoyScript(addressToScript(wallet.ckbAddress));
-  const requiredCapacity = requiredDeploymentCapacity(deploymentPackage.scripts);
-  const funding = await collectFundingCells(deployerLock, requiredCapacity);
-  const tx = buildDeploymentTransaction(deployerLock, deploymentPackage.scripts, funding, requiredCapacity);
+export type DeploymentOptions = {
+  popup?: JoyIdPopup;
+  onProgress?: (step: DeploymentProgress) => void;
+};
 
-  const signedTx = await signRawCkbTransaction(wallet, tx, [0]);
-  const txHash = await broadcastCkbTransaction(signedTx);
+export async function deployCkbScripts(
+  apiBase: string,
+  wallet: ConnectedCkbWallet,
+  options: DeploymentOptions = {},
+): Promise<DeploymentResult> {
+  try {
+    options.onProgress?.("package");
+    const deploymentPackage = await fetchDeploymentPackage(apiBase);
+    if (deploymentPackage.network !== "testnet" || ckbNetwork !== "testnet") {
+      throw new Error("LiquidLane script deployment is currently enabled for CKB testnet only.");
+    }
 
-  return {
+    const deployerLock = addressToJoyScript(addressToScript(wallet.ckbAddress));
+    const requiredCapacity = requiredDeploymentCapacity(deploymentPackage.scripts);
+    options.onProgress?.("funding");
+    const funding = await collectFundingCells(deployerLock, requiredCapacity);
+    const tx = buildDeploymentTransaction(deployerLock, deploymentPackage.scripts, funding, requiredCapacity);
+
+    options.onProgress?.("signing");
+    const signedTx = await signRawCkbTransaction(wallet, tx, [0], options.popup);
+    options.onProgress?.("broadcast");
+    const txHash = await broadcastCkbTransaction(signedTx);
+
+    return {
     txHash,
     explorerUrl: transactionExplorerUrl(txHash),
     requiredCkb: formatCkb(requiredCapacity),
@@ -117,7 +134,11 @@ export async function deployCkbScripts(apiBase: string, wallet: ConnectedCkbWall
       outPoint: `${txHash}#${toHex(BigInt(index))}`,
       explorerUrl: transactionExplorerUrl(txHash),
     })),
-  };
+    };
+  } catch (error) {
+    closeUnusedPopup(options.popup);
+    throw error;
+  }
 }
 
 async function fetchDeploymentPackage(apiBase: string): Promise<DeploymentPackage> {
@@ -162,7 +183,7 @@ async function collectFundingCells(lock: JoyScript, requiredCapacity: bigint): P
   }
 
   if (totalCapacity < requiredCapacity) {
-    throw new Error(`Fund JoyID with at least ${formatCkb(requiredCapacity)} for script deployment.`);
+    throw new Error(`Fund JoyID with at least ${formatCkb(requiredCapacity)} for script deployment. Found ${formatCkb(totalCapacity)} spendable CKB.`);
   }
 
   return { inputs, totalCapacity };
@@ -269,6 +290,12 @@ function toRpcScript(script: JoyScript): RpcScript {
 
 function emptyWitness() {
   return serializeWitnessArgs({ lock: "0x", inputType: "0x", outputType: "0x" });
+}
+
+function closeUnusedPopup(popup?: JoyIdPopup) {
+  if (popup && !popup.closed) {
+    popup.close();
+  }
 }
 
 function transactionExplorerUrl(txHash: string) {

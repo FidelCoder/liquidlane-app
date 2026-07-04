@@ -2,6 +2,7 @@ import {
   connect,
   getJoyIDLockScript,
   initConfig,
+  openPopup,
   signChallenge,
   signRawTransaction,
   signTransaction,
@@ -38,6 +39,8 @@ export type SignedSupplyTransaction = {
   txHash: string | null;
   memo: string;
 };
+
+export type JoyIdPopup = Window | null;
 
 export const ckbNetwork = (process.env.NEXT_PUBLIC_CKB_NETWORK === "mainnet" ? "mainnet" : "testnet") as
   | "mainnet"
@@ -122,10 +125,16 @@ export async function signSupplyTransaction(
 }
 
 
+export function openJoyIdPopup(): JoyIdPopup {
+  configureJoyID();
+  return openPopup("");
+}
+
 export async function signRawCkbTransaction(
   wallet: ConnectedCkbWallet,
   tx: CKBTransaction,
   witnessIndexes = [0],
+  popup?: JoyIdPopup,
 ): Promise<CKBTransaction> {
   configureJoyID();
 
@@ -136,6 +145,7 @@ export async function signRawCkbTransaction(
     joyidServerURL,
     rpcURL: ckbRpcURL,
     witnessIndexes,
+    popup: popup ?? undefined,
     timeoutInSeconds: 300,
   });
 }
