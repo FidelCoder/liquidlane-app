@@ -104,6 +104,18 @@ a { color: inherit; }
   min-height: 38px;
   padding: 0 12px;
 }
+.connected-pill .copy-address-button {
+  background: transparent;
+  border: 0;
+  color: #f6fbf8;
+  height: 26px;
+  min-height: 26px;
+  padding: 0;
+  width: 26px;
+}
+.connected-pill .copy-address-button:hover {
+  background: rgba(246, 251, 248, 0.12);
+}
 .landing-content {
   align-items: flex-end;
   display: grid;
