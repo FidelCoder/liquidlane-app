@@ -85,6 +85,10 @@ type DeploymentInput = {
   since: string;
 };
 
+type FundingCandidate = DeploymentInput & {
+  capacity: bigint;
+};
+
 type DeploymentFunding = {
   inputs: DeploymentInput[];
   totalCapacity: bigint;
@@ -178,34 +182,81 @@ async function collectFundingCells(lock: JoyScript, requiredCapacity: bigint): P
     throw new Error("NEXT_PUBLIC_CKB_RPC_URL is required for testnet deployment.");
   }
 
-  const inputs: DeploymentInput[] = [];
-  let totalCapacity = BigInt(0);
+  const candidates: FundingCandidate[] = [];
   let cursor: string | null = null;
 
-  for (let round = 0; round < MAX_COLLECTION_ROUNDS && totalCapacity < requiredCapacity; round += 1) {
+  for (let round = 0; round < MAX_COLLECTION_ROUNDS; round += 1) {
     const result: GetCellsResponse = await callCkbRpc<GetCellsResponse>("get_cells", getCellsParams(lock, cursor));
     for (const cell of result.objects) {
       if (cell.output.type) continue;
       if ((cell.output_data ?? "0x") !== "0x") continue;
-      inputs.push({
+      candidates.push({
         previousOutput: {
           txHash: cell.out_point.tx_hash,
           index: cell.out_point.index,
         },
         since: "0x0",
+        capacity: BigInt(cell.output.capacity),
       });
-      totalCapacity += BigInt(cell.output.capacity);
-      if (totalCapacity >= requiredCapacity) break;
     }
     if (!result.objects.length || cursor === result.last_cursor) break;
     cursor = result.last_cursor;
   }
 
-  if (totalCapacity < requiredCapacity) {
-    throw new Error(`Fund JoyID with at least ${formatCkb(requiredCapacity)} for script deployment. Found ${formatCkb(totalCapacity)} spendable CKB.`);
+  const funding = selectFundingCells(candidates, requiredCapacity);
+  if (!funding) {
+    throw new Error(`Fund JoyID with at least ${formatCkb(requiredCapacity)} for script deployment. Found ${formatCkb(totalCandidateCapacity(candidates))} spendable CKB.`);
   }
 
-  return { inputs, totalCapacity };
+  return funding;
+}
+
+function selectFundingCells(candidates: FundingCandidate[], requiredCapacity: bigint): DeploymentFunding | null {
+  const single = candidates
+    .filter((candidate) => candidate.capacity >= requiredCapacity)
+    .sort((left, right) => compareCapacityAsc(left.capacity, right.capacity))[0];
+
+  if (single) {
+    return {
+      inputs: [toDeploymentInput(single)],
+      totalCapacity: single.capacity,
+    };
+  }
+
+  const selected: FundingCandidate[] = [];
+  let totalCapacity = BigInt(0);
+  for (const candidate of [...candidates].sort((left, right) => compareCapacityDesc(left.capacity, right.capacity))) {
+    selected.push(candidate);
+    totalCapacity += candidate.capacity;
+    if (totalCapacity >= requiredCapacity) break;
+  }
+
+  if (totalCapacity < requiredCapacity) return null;
+  return {
+    inputs: selected.map(toDeploymentInput),
+    totalCapacity,
+  };
+}
+
+function toDeploymentInput(candidate: FundingCandidate): DeploymentInput {
+  return {
+    previousOutput: candidate.previousOutput,
+    since: candidate.since,
+  };
+}
+
+function totalCandidateCapacity(candidates: FundingCandidate[]) {
+  return candidates.reduce((sum, candidate) => sum + candidate.capacity, BigInt(0));
+}
+
+function compareCapacityAsc(left: bigint, right: bigint) {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
+function compareCapacityDesc(left: bigint, right: bigint) {
+  return compareCapacityAsc(right, left);
 }
 
 function getCellsParams(lock: JoyScript, cursor: string | null): unknown[] {
