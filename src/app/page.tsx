@@ -26,6 +26,7 @@ import { supplyVaultLiquidity } from "@/lib/ckbSupply";
 import {
   connectCkbWallet,
   openJoyIdPopup,
+  showJoyIdPopupStatus,
   type ConnectedCkbWallet,
   type JoyIdPopup,
 } from "@/lib/ckbWallet";
@@ -466,6 +467,7 @@ export default function Home() {
     const amount = Number(form.get("amount"));
     const asset = String(form.get("asset") ?? DEFAULT_ASSET).trim().toUpperCase();
     setBusy("deposit");
+    let signPopup: JoyIdPopup | undefined;
     try {
       if (!Number.isFinite(amount) || amount <= 0) {
         throw new Error("Supply amount must be greater than zero.");
@@ -492,11 +494,19 @@ export default function Home() {
         return;
       }
 
-      const signPopup = openJoyIdPopup();
+      signPopup = openJoyIdPopup();
       if (!signPopup) {
         throw new Error("Browser blocked the JoyID popup. Enable popups for localhost and try again.");
       }
 
+      showJoyIdPopupStatus(signPopup, "Preparing supply", "LiquidLane is loading the active vault config.");
+      setStatus("Loading the active vault config.");
+      const supplyVault = await loadVault();
+      if (!supplyVault?.configured || !supplyVault.address?.trim()) {
+        throw new Error("LiquidLane vault is not configured yet.");
+      }
+
+      showJoyIdPopupStatus(signPopup, "Preparing supply", "LiquidLane is creating your vault supply intent.");
       setStatus("Preparing the vault supply intent.");
       const intent = await request<SupplyIntent>("/vault/supply/intents", {
         method: "POST",
@@ -505,7 +515,7 @@ export default function Home() {
 
       setStatus("Building the CKB vault transaction.");
       const signed = await supplyVaultLiquidity(activeWallet, {
-        vault: activeVault,
+        vault: supplyVault,
         intent,
         asset,
         amount,
@@ -525,7 +535,9 @@ export default function Home() {
       setStatus(`Supplied ${assetAmount(amount, asset)} to ${shortAddress(intent.vault_address)} (${shortHash(signed.txHash)}).`);
       await refresh();
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Supply failed.");
+      const message = error instanceof Error ? error.message : "Supply failed.";
+      showJoyIdPopupStatus(signPopup, "Supply failed", message);
+      setStatus(message);
     } finally {
       setBusy(null);
     }

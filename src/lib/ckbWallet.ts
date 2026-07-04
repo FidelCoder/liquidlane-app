@@ -1,10 +1,10 @@
 import {
-  calculateChallenge,
   connect,
   getJoyIDLockScript,
   initConfig,
   openPopup,
   signChallenge as joySignChallenge,
+  signRawTransaction as joySignRawTransaction,
   signTransaction,
   type CKBTransaction,
   type ConnectResponseData,
@@ -135,6 +135,17 @@ export function openJoyIdPopup(): JoyIdPopup {
   return openPopup("");
 }
 
+export function showJoyIdPopupStatus(popup: JoyIdPopup | undefined, title: string, detail: string) {
+  if (!popup || popup.closed) return;
+  try {
+    popup.document.open();
+    popup.document.write(popupStatusHtml(title, detail));
+    popup.document.close();
+  } catch {
+    // The popup may already be cross-origin after JoyID navigation starts.
+  }
+}
+
 export async function signRawCkbTransaction(
   wallet: ConnectedCkbWallet,
   tx: CKBTransaction,
@@ -142,9 +153,9 @@ export async function signRawCkbTransaction(
   popup?: JoyIdPopup,
 ): Promise<CKBTransaction> {
   configureJoyID();
+  showJoyIdPopupStatus(popup, "Opening JoyID", "Review the CKB transaction and confirm the signature.");
 
-  const challenge = await calculateChallenge(tx, witnessIndexes);
-  const signed = await joySignChallenge(hexToBytes(challenge), wallet.ckbAddress, {
+  return joySignRawTransaction(tx, wallet.ckbAddress, {
     name: "LiquidLane",
     network: ckbNetwork,
     joyidAppURL,
@@ -152,9 +163,8 @@ export async function signRawCkbTransaction(
     rpcURL: ckbRpcURL,
     popup: popup ?? undefined,
     timeoutInSeconds: 300,
+    witnessIndexes,
   });
-
-  return buildJoyIdSignedTx(cloneTransaction(tx), signed, witnessIndexes);
 }
 
 export async function broadcastCkbTransaction(tx: CKBTransaction): Promise<string> {
@@ -272,6 +282,42 @@ function hexToBytes(hex: string) {
     bytes[index / 2] = Number.parseInt(clean.slice(index, index + 2), 16);
   }
   return bytes;
+}
+
+function popupStatusHtml(title: string, detail: string) {
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>${escapeHtml(title)}</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #08110f; color: #f2fbf7; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    main { width: min(360px, calc(100vw - 40px)); }
+    .mark { width: 42px; height: 42px; border: 1px solid #7ee7b8; border-radius: 10px; display: grid; place-items: center; margin-bottom: 18px; color: #7ee7b8; }
+    .spinner { width: 18px; height: 18px; border: 2px solid rgba(126, 231, 184, .25); border-top-color: #7ee7b8; border-radius: 50%; animation: spin .8s linear infinite; }
+    h1 { font-size: 21px; line-height: 1.2; margin: 0 0 10px; }
+    p { color: #a8bdb4; line-height: 1.5; margin: 0; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="mark"><div class="spinner"></div></div>
+    <h1>${escapeHtml(title)}</h1>
+    <p>${escapeHtml(detail)}</p>
+  </main>
+</body>
+</html>`;
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 function configureJoyID() {
