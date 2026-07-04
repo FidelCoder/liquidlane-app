@@ -17,7 +17,14 @@ const MAX_COLLECTION_ROUNDS = 10;
 const EXPLORER_BASE = process.env.NEXT_PUBLIC_CKB_EXPLORER_URL ?? "https://pudge.explorer.nervos.org";
 const JOYID_CELL_DEP_TX_HASH = process.env.NEXT_PUBLIC_JOYID_CELL_DEP_TX_HASH;
 const JOYID_CELL_DEP_INDEX = process.env.NEXT_PUBLIC_JOYID_CELL_DEP_INDEX ?? "0x0";
-const JOYID_CELL_DEP_TYPE = process.env.NEXT_PUBLIC_JOYID_CELL_DEP_TYPE ?? "dep_group";
+const JOYID_CELL_DEP_TYPE = process.env.NEXT_PUBLIC_JOYID_CELL_DEP_TYPE;
+const TESTNET_JOYID_CODE_CELL_DEP: CellDep = {
+  outPoint: {
+    txHash: "0x4a596d31dc35e88fb1591debbf680b04a44b4a434e3a94453c21ea8950ffb4d9",
+    index: "0x0",
+  },
+  depType: "code",
+};
 
 type HashType = "type" | "data" | "data1";
 type CellDep = CKBTransaction["cellDeps"][number];
@@ -63,6 +70,11 @@ type RpcLiveCell = {
 type GetCellsResponse = {
   objects: RpcLiveCell[];
   last_cursor: string;
+};
+
+type GetLiveCellResponse = {
+  cell: unknown | null;
+  status: "live" | "dead" | "unknown";
 };
 
 type DeploymentInput = {
@@ -115,14 +127,15 @@ export async function deployCkbScripts(
     }
 
     const deployerLock = addressToJoyScript(addressToScript(wallet.ckbAddress));
+    const joyIdCellDeps = await resolveJoyIdCellDeps();
     const requiredCapacity = requiredDeploymentCapacity(deploymentPackage.scripts);
     options.onProgress?.("funding");
     const funding = await collectFundingCells(deployerLock, requiredCapacity);
-    const tx = buildDeploymentTransaction(deployerLock, deploymentPackage.scripts, funding, requiredCapacity);
+    const tx = buildDeploymentTransaction(deployerLock, deploymentPackage.scripts, funding, requiredCapacity, joyIdCellDeps);
 
     options.onProgress?.("signing");
     const signedTx = await signRawCkbTransaction(wallet, tx, [0], options.popup);
-    const txToBroadcast = withResolvedJoyIdCellDep(signedTx);
+    const txToBroadcast = withResolvedJoyIdCellDep(signedTx, joyIdCellDeps);
     options.onProgress?.("broadcast");
     const txHash = await broadcastCkbTransaction(txToBroadcast);
 
@@ -224,7 +237,7 @@ async function callCkbRpc<T>(method: string, params: unknown[]): Promise<T> {
   if (body.error) {
     throw new Error(body.error.message ?? `CKB RPC ${method} failed.`);
   }
-  if (!body.result) {
+  if (body.result === undefined || body.result === null) {
     throw new Error(`CKB RPC ${method} returned no result.`);
   }
   return body.result;
@@ -235,6 +248,7 @@ function buildDeploymentTransaction(
   scripts: DeploymentPackageScript[],
   funding: DeploymentFunding,
   requiredCapacity: bigint,
+  joyIdCellDeps: CellDep[],
 ): CKBTransaction {
   const codeOutputs = scripts.map((script) => ({
     capacity: toHex(scriptCellCapacity(script)),
@@ -247,7 +261,7 @@ function buildDeploymentTransaction(
 
   return {
     version: "0x0",
-    cellDeps: configuredJoyIdCellDep(),
+    cellDeps: joyIdCellDeps,
     headerDeps: [],
     inputs: funding.inputs,
     outputs: [
@@ -263,30 +277,60 @@ function buildDeploymentTransaction(
 }
 
 function configuredJoyIdCellDep(): CellDep[] {
-  if (!JOYID_CELL_DEP_TX_HASH?.trim()) return [];
-  if (JOYID_CELL_DEP_TYPE !== "dep_group" && JOYID_CELL_DEP_TYPE !== "code") {
+  const txHash = JOYID_CELL_DEP_TX_HASH?.trim();
+  if (txHash) {
+    const depType = JOYID_CELL_DEP_TYPE ?? "code";
+    if (depType !== "dep_group" && depType !== "code") {
+      throw new Error("NEXT_PUBLIC_JOYID_CELL_DEP_TYPE must be dep_group or code.");
+    }
+    return [
+      {
+        outPoint: {
+          txHash,
+          index: JOYID_CELL_DEP_INDEX,
+        },
+        depType: depType === "dep_group" ? "depGroup" : "code",
+      },
+    ];
+  }
+
+  if (ckbNetwork === "testnet") return [TESTNET_JOYID_CODE_CELL_DEP];
+
+  if (JOYID_CELL_DEP_TYPE !== undefined && JOYID_CELL_DEP_TYPE !== "dep_group" && JOYID_CELL_DEP_TYPE !== "code") {
     throw new Error("NEXT_PUBLIC_JOYID_CELL_DEP_TYPE must be dep_group or code.");
   }
-  return [
-    {
-      outPoint: {
-        txHash: JOYID_CELL_DEP_TX_HASH.trim(),
-        index: JOYID_CELL_DEP_INDEX,
-      },
-      depType: JOYID_CELL_DEP_TYPE === "dep_group" ? "depGroup" : "code",
-    },
-  ];
+  return [];
 }
 
-function withResolvedJoyIdCellDep(tx: CKBTransaction): CKBTransaction {
-  if (tx.cellDeps.length > 0) return tx;
+async function resolveJoyIdCellDeps(): Promise<CellDep[]> {
   const deps = configuredJoyIdCellDep();
-  if (deps.length > 0) {
-    return { ...tx, cellDeps: deps };
+  if (deps.length === 0) {
+    throw new Error("Configure NEXT_PUBLIC_JOYID_CELL_DEP_TX_HASH before deploying with JoyID on this network.");
   }
-  throw new Error(
-    "JoyID returned no CKB cell dep for raw signing. Set NEXT_PUBLIC_JOYID_CELL_DEP_TX_HASH to the current JoyID testnet dep out-point from Pudge explorer.",
-  );
+
+  await assertLiveCellDep(deps[0]);
+  return deps;
+}
+
+async function assertLiveCellDep(dep: CellDep) {
+  const result = await callCkbRpc<GetLiveCellResponse>("get_live_cell", [
+    {
+      tx_hash: dep.outPoint.txHash,
+      index: dep.outPoint.index,
+    },
+    false,
+  ]);
+  if (result.status !== "live") {
+    throw new Error(`JoyID CKB cell dep ${dep.outPoint.txHash}#${dep.outPoint.index} is ${result.status}. Update NEXT_PUBLIC_JOYID_CELL_DEP_TX_HASH and restart the frontend.`);
+  }
+}
+
+function withResolvedJoyIdCellDep(tx: CKBTransaction, fallbackDeps: CellDep[]): CKBTransaction {
+  if (tx.cellDeps.length > 0) return tx;
+  if (fallbackDeps.length > 0) {
+    return { ...tx, cellDeps: fallbackDeps };
+  }
+  throw new Error("JoyID raw signing returned no CKB cell dep and LiquidLane has no fallback dep configured.");
 }
 
 function requiredDeploymentCapacity(scripts: DeploymentPackageScript[]) {
