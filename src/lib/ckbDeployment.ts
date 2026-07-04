@@ -133,6 +133,7 @@ export type DeploymentProgressDetail = {
 
 export type DeploymentOptions = {
   popup?: JoyIdPopup;
+  popups?: JoyIdPopup[];
   onProgress?: (step: DeploymentProgress, detail?: DeploymentProgressDetail) => void;
 };
 
@@ -153,6 +154,10 @@ export async function deployCkbScripts(
     options.onProgress?.("funding");
     const candidates = await collectFundingCandidates(deployerLock);
     const plans = planDeploymentTransactions(deploymentPackage.scripts, candidates);
+    const signingPopups = usableDeploymentPopups(options);
+    if (signingPopups.length < plans.length) {
+      throw new Error(`Browser opened ${signingPopups.length} JoyID popup(s), but this deployment needs ${plans.length} signature window(s). Enable popups for localhost and retry.`);
+    }
 
     const transactions: DeploymentTransactionRecord[] = [];
     const records: DeploymentRecordScript[] = [];
@@ -166,7 +171,7 @@ export async function deployCkbScripts(
       const joyIdWitnessIndexes = plan.funding.inputs.map((_, index) => index);
 
       options.onProgress?.("signing", detail);
-      const signedTx = await signRawCkbTransaction(wallet, tx, joyIdWitnessIndexes, options.popup);
+      const signedTx = await signRawCkbTransaction(wallet, tx, joyIdWitnessIndexes, signingPopups[planIndex]);
       const txToBroadcast = withResolvedJoyIdCellDep(signedTx, joyIdCellDeps);
       options.onProgress?.("broadcast", detail);
       const txHash = await broadcastCkbTransaction(txToBroadcast);
@@ -191,9 +196,8 @@ export async function deployCkbScripts(
       deployedCkb: formatCkb(totalDeployedCapacity),
       scripts: records,
     };
-  } catch (error) {
-    closeUnusedPopup(options.popup);
-    throw error;
+  } finally {
+    closeUnusedDeploymentPopups(options);
   }
 }
 
@@ -517,10 +521,27 @@ function emptyWitness() {
   return serializeWitnessArgs({ lock: "0x", inputType: "0x", outputType: "0x" });
 }
 
+function usableDeploymentPopups(options: DeploymentOptions): Window[] {
+  const pool = options.popups?.filter(isOpenPopup) ?? [];
+  if (pool.length > 0) return pool;
+  return isOpenPopup(options.popup) ? [options.popup] : [];
+}
+
+function closeUnusedDeploymentPopups(options: DeploymentOptions) {
+  for (const popup of options.popups ?? []) {
+    closeUnusedPopup(popup);
+  }
+  closeUnusedPopup(options.popup);
+}
+
 function closeUnusedPopup(popup?: JoyIdPopup) {
   if (popup && !popup.closed) {
     popup.close();
   }
+}
+
+function isOpenPopup(popup?: JoyIdPopup): popup is Window {
+  return Boolean(popup && !popup.closed);
 }
 
 function transactionExplorerUrl(txHash: string) {
