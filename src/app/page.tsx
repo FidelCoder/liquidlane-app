@@ -27,6 +27,7 @@ import {
   openJoyIdPopup,
   signSupplyTransaction,
   type ConnectedCkbWallet,
+  type JoyIdPopup,
 } from "@/lib/ckbWallet";
 
 type Role = "lp" | "merchant" | "operator";
@@ -223,6 +224,7 @@ type Service = {
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 const DEFAULT_ASSET = "CKB";
+const DEPLOYMENT_POPUP_POOL_SIZE = 5;
 const TOKEN_KEY = "liquidlane_token";
 const ADDRESS_KEY = "liquidlane_ckb_address";
 
@@ -573,8 +575,10 @@ export default function Home() {
   async function deployScriptsToTestnet() {
     setBusy("deploy-scripts");
     setDeploymentNotice("Opening JoyID and preparing deployment.");
-    const popup = openJoyIdPopup();
+    const popupPool = openJoyIdPopupPool(DEPLOYMENT_POPUP_POOL_SIZE);
+    const popup = firstOpenPopup(popupPool);
     if (!popup) {
+      closeJoyIdPopupPool(popupPool);
       setBusy(null);
       setDeploymentNotice("Browser blocked the JoyID popup. Enable popups for localhost and try again.");
       setStatus("Browser blocked the JoyID popup. Enable popups for localhost and try again.");
@@ -599,6 +603,7 @@ export default function Home() {
       setStatus("Preparing CKB script deployment package.");
       const result = await deployCkbScripts(API_BASE, activeWallet, {
         popup,
+        popups: popupPool,
         onProgress(step, detail) {
           const message = deploymentStepMessage(step, detail);
           setDeploymentNotice(message);
@@ -614,6 +619,7 @@ export default function Home() {
       setDeploymentNotice(message);
       setStatus(message);
     } finally {
+      closeJoyIdPopupPool(popupPool);
       setBusy(null);
     }
   }
@@ -1047,6 +1053,20 @@ function shortHash(hash: string) {
 function shortId(id: string) {
   if (id.length <= 22) return id;
   return `${id.slice(0, 12)}...${id.slice(-8)}`;
+}
+
+function openJoyIdPopupPool(size: number): JoyIdPopup[] {
+  return Array.from({ length: size }, () => openJoyIdPopup());
+}
+
+function firstOpenPopup(popups: JoyIdPopup[]) {
+  return popups.find((popup) => popup && !popup.closed) ?? null;
+}
+
+function closeJoyIdPopupPool(popups: JoyIdPopup[]) {
+  for (const popup of popups) {
+    if (popup && !popup.closed) popup.close();
+  }
 }
 
 function shortAddress(address: string) {
