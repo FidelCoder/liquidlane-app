@@ -172,9 +172,9 @@ export async function deployCkbScripts(
 
       options.onProgress?.("signing", detail);
       const signedTx = await signRawCkbTransaction(wallet, tx, joyIdWitnessIndexes, signingPopups[planIndex]);
-      const txToBroadcast = withResolvedJoyIdCellDep(signedTx, joyIdCellDeps);
+      assertSignedRawTransactionMatches(tx, signedTx);
       options.onProgress?.("broadcast", detail);
-      const txHash = await broadcastCkbTransaction(txToBroadcast);
+      const txHash = await broadcastCkbTransaction(signedTx);
       const explorerUrl = transactionExplorerUrl(txHash);
 
       transactions.push({ txHash, explorerUrl });
@@ -474,12 +474,19 @@ async function assertLiveCellDep(dep: CellDep) {
   }
 }
 
-function withResolvedJoyIdCellDep(tx: CKBTransaction, fallbackDeps: CellDep[]): CKBTransaction {
-  if (tx.cellDeps.length > 0) return tx;
-  if (fallbackDeps.length > 0) {
-    return { ...tx, cellDeps: fallbackDeps };
+function assertSignedRawTransactionMatches(unsignedTx: CKBTransaction, signedTx: CKBTransaction) {
+  const rawFields = (tx: CKBTransaction) => JSON.stringify({
+    cellDeps: tx.cellDeps,
+    headerDeps: tx.headerDeps,
+    inputs: tx.inputs,
+    outputs: tx.outputs,
+    outputsData: tx.outputsData,
+    version: tx.version,
+  });
+
+  if (rawFields(unsignedTx) !== rawFields(signedTx)) {
+    throw new Error("JoyID returned a signed transaction with changed raw fields. LiquidLane will not broadcast it because the signature would be invalid.");
   }
-  throw new Error("JoyID raw signing returned no CKB cell dep and LiquidLane has no fallback dep configured.");
 }
 
 function requiredDeploymentCapacity(scripts: DeploymentPackageScript[]) {

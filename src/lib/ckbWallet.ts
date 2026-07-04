@@ -1,10 +1,11 @@
 import {
+  buildSignedTx,
+  calculateChallenge,
   connect,
   getJoyIDLockScript,
   initConfig,
   openPopup,
-  signChallenge,
-  signRawTransaction,
+  signChallenge as joySignChallenge,
   signTransaction,
   type CKBTransaction,
   type ConnectResponseData,
@@ -69,7 +70,7 @@ export async function connectCkbWallet(popup?: JoyIdPopup): Promise<ConnectedCkb
 export async function signCkbChallenge(challengeMessage: string, wallet: ConnectedCkbWallet): Promise<CkbWalletProof> {
   configureJoyID();
 
-  const signed = await signChallenge(challengeMessage, wallet.ckbAddress, {
+  const signed = await joySignChallenge(challengeMessage, wallet.ckbAddress, {
     name: "LiquidLane",
     network: ckbNetwork,
     joyidAppURL,
@@ -142,16 +143,18 @@ export async function signRawCkbTransaction(
 ): Promise<CKBTransaction> {
   configureJoyID();
 
-  return signRawTransaction(tx, wallet.ckbAddress, {
+  const challenge = await calculateChallenge(tx, witnessIndexes);
+  const signed = await joySignChallenge(hexToBytes(challenge), wallet.ckbAddress, {
     name: "LiquidLane",
     network: ckbNetwork,
     joyidAppURL,
     joyidServerURL,
     rpcURL: ckbRpcURL,
-    witnessIndexes,
     popup: popup ?? undefined,
     timeoutInSeconds: 300,
   });
+
+  return buildSignedTx(cloneTransaction(tx), signed, witnessIndexes);
 }
 
 export async function broadcastCkbTransaction(tx: CKBTransaction): Promise<string> {
@@ -223,6 +226,40 @@ function toRpcScript(script: { codeHash: string; hashType: string; args: string 
     hash_type: script.hashType,
     args: script.args,
   };
+}
+
+function cloneTransaction(tx: CKBTransaction): CKBTransaction {
+  return {
+    ...tx,
+    cellDeps: tx.cellDeps.map((dep) => ({
+      depType: dep.depType,
+      outPoint: { ...dep.outPoint },
+    })),
+    headerDeps: [...tx.headerDeps],
+    inputs: tx.inputs.map((input) => ({
+      since: input.since,
+      previousOutput: { ...input.previousOutput },
+    })),
+    outputs: tx.outputs.map((output) => ({
+      ...output,
+      lock: { ...output.lock },
+      ...(output.type ? { type: { ...output.type } } : {}),
+    })),
+    outputsData: [...tx.outputsData],
+    witnesses: [...tx.witnesses],
+  };
+}
+
+function hexToBytes(hex: string) {
+  const clean = hex.startsWith("0x") ? hex.slice(2) : hex;
+  if (clean.length % 2 !== 0) {
+    throw new Error("JoyID raw transaction challenge must be even-length hex.");
+  }
+  const bytes = new Uint8Array(clean.length / 2);
+  for (let index = 0; index < clean.length; index += 2) {
+    bytes[index / 2] = Number.parseInt(clean.slice(index, index + 2), 16);
+  }
+  return bytes;
 }
 
 function configureJoyID() {
