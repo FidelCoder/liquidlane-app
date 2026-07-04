@@ -48,7 +48,7 @@ export const ckbNetwork = (process.env.NEXT_PUBLIC_CKB_NETWORK === "mainnet" ? "
 
 const joyidAppURL = process.env.NEXT_PUBLIC_JOYID_APP_URL ?? (ckbNetwork === "mainnet" ? "https://app.joy.id" : "https://testnet.joyid.dev");
 const joyidServerURL = process.env.NEXT_PUBLIC_JOYID_SERVER_URL ?? (ckbNetwork === "mainnet" ? "https://api.joy.id/api/v1" : "https://api.testnet.joyid.dev/api/v1");
-export const ckbRpcURL = process.env.NEXT_PUBLIC_CKB_RPC_URL;
+export const ckbRpcURL = normalizeCkbRpcURL(process.env.NEXT_PUBLIC_CKB_RPC_URL);
 
 export async function connectCkbWallet(popup?: JoyIdPopup): Promise<ConnectedCkbWallet> {
   configureJoyID();
@@ -233,6 +233,21 @@ function configureJoyID() {
     joyidServerURL,
     rpcURL: ckbRpcURL,
   });
+}
+
+function normalizeCkbRpcURL(value?: string) {
+  const fallback = ckbNetwork === "mainnet" ? "https://mainnet.ckb.dev/rpc" : "https://testnet.ckb.dev/rpc";
+  const rawUrl = value?.trim() || fallback;
+  try {
+    const url = new URL(rawUrl);
+    const isPublicCkbDev = url.hostname === "mainnet.ckb.dev" || url.hostname === "testnet.ckb.dev";
+    if (isPublicCkbDev && (url.pathname === "" || url.pathname === "/" || url.pathname === "/rpc/")) {
+      url.pathname = "/rpc";
+    }
+    return url.toString();
+  } catch {
+    return rawUrl;
+  }
 }
 
 function walletFromConnection(connection: ConnectResponseData): ConnectedCkbWallet {

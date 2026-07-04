@@ -380,7 +380,7 @@ async function callCkbRpc<T>(method: string, params: unknown[]): Promise<T> {
     body: JSON.stringify({ id: Date.now(), jsonrpc: "2.0", method, params }),
   });
   if (!response.ok) {
-    throw new Error(`CKB RPC ${method} failed with HTTP ${response.status}.`);
+    throw new Error(`CKB RPC ${method} failed with HTTP ${response.status} at ${ckbRpcURL}. Public CKB endpoints must include /rpc.`);
   }
   const body = (await response.json()) as { result?: T; error?: { message?: string } };
   if (body.error) {
