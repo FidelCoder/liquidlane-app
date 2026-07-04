@@ -302,9 +302,9 @@ code { background: #eef2ee; border-radius: 6px; font-size: 0.78rem; padding: 6px
 .status-tag[data-status="released"] { background: rgba(75, 126, 164, 0.14); color: var(--blue); }
 .status-tag[data-status="failed"], .status-tag[data-status="closed"], .status-tag[data-status="expired"], .status-tag[data-status="cancelled"] { background: rgba(184, 71, 71, 0.14); color: var(--red); }
 .error-text { color: var(--red) !important; }
-.activity-list > div { align-items: flex-start; border-bottom: 1px solid var(--line); display: grid; gap: 10px; grid-template-columns: 28px 1fr; padding: 12px 0; }
-.activity-list > div:last-child { border-bottom: 0; }
-.activity-list span { align-items: center; background: rgba(8, 132, 124, 0.1); border-radius: 8px; color: var(--accent); display: flex; height: 28px; justify-content: center; width: 28px; }
+.activity-list > div:not(.empty-state) { align-items: flex-start; border-bottom: 1px solid var(--line); display: grid; gap: 10px; grid-template-columns: 28px 1fr; padding: 12px 0; }
+.activity-list > div:not(.empty-state):last-child { border-bottom: 0; }
+.activity-list > div:not(.empty-state) span { align-items: center; background: rgba(8, 132, 124, 0.1); border-radius: 8px; color: var(--accent); display: flex; height: 28px; justify-content: center; width: 28px; }
 .activity-list p { color: var(--muted); margin-bottom: 0; }
 .activity-list strong { color: var(--text); }
 .empty-state { background: var(--surface-soft); border: 1px dashed var(--line); border-radius: 8px; color: var(--muted); display: grid; gap: 6px; padding: 18px; }

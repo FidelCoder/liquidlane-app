@@ -1,4 +1,4 @@
-import { getJoyIDCellDep, type CKBTransaction } from "@joyid/ckb";
+import { type CKBTransaction } from "@joyid/ckb";
 import { addressToScript, scriptToHash, serializeWitnessArgs } from "@nervosnetwork/ckb-sdk-utils";
 import {
   broadcastCkbTransaction,
@@ -15,8 +15,12 @@ const CHANGE_CELL_CKB = BigInt(200);
 const DEPLOY_FEE_CKB = BigInt(10);
 const MAX_COLLECTION_ROUNDS = 10;
 const EXPLORER_BASE = process.env.NEXT_PUBLIC_CKB_EXPLORER_URL ?? "https://pudge.explorer.nervos.org";
+const JOYID_CELL_DEP_TX_HASH = process.env.NEXT_PUBLIC_JOYID_CELL_DEP_TX_HASH;
+const JOYID_CELL_DEP_INDEX = process.env.NEXT_PUBLIC_JOYID_CELL_DEP_INDEX ?? "0x0";
+const JOYID_CELL_DEP_TYPE = process.env.NEXT_PUBLIC_JOYID_CELL_DEP_TYPE ?? "dep_group";
 
 type HashType = "type" | "data" | "data1";
+type CellDep = CKBTransaction["cellDeps"][number];
 
 type DeploymentPackage = {
   network: string;
@@ -118,22 +122,23 @@ export async function deployCkbScripts(
 
     options.onProgress?.("signing");
     const signedTx = await signRawCkbTransaction(wallet, tx, [0], options.popup);
+    const txToBroadcast = withResolvedJoyIdCellDep(signedTx);
     options.onProgress?.("broadcast");
-    const txHash = await broadcastCkbTransaction(signedTx);
+    const txHash = await broadcastCkbTransaction(txToBroadcast);
 
     return {
-    txHash,
-    explorerUrl: transactionExplorerUrl(txHash),
-    requiredCkb: formatCkb(requiredCapacity),
-    deployedCkb: formatCkb(codeCellCapacity(deploymentPackage.scripts)),
-    scripts: deploymentPackage.scripts.map((script, index) => ({
-      name: script.name,
-      codeHash: script.ckb_data_hash,
-      hashType: script.hash_type,
-      outputIndex: toHex(BigInt(index)),
-      outPoint: `${txHash}#${toHex(BigInt(index))}`,
+      txHash,
       explorerUrl: transactionExplorerUrl(txHash),
-    })),
+      requiredCkb: formatCkb(requiredCapacity),
+      deployedCkb: formatCkb(codeCellCapacity(deploymentPackage.scripts)),
+      scripts: deploymentPackage.scripts.map((script, index) => ({
+        name: script.name,
+        codeHash: script.ckb_data_hash,
+        hashType: script.hash_type,
+        outputIndex: toHex(BigInt(index)),
+        outPoint: `${txHash}#${toHex(BigInt(index))}`,
+        explorerUrl: transactionExplorerUrl(txHash),
+      })),
     };
   } catch (error) {
     closeUnusedPopup(options.popup);
@@ -242,7 +247,7 @@ function buildDeploymentTransaction(
 
   return {
     version: "0x0",
-    cellDeps: [getJoyIDCellDep(ckbNetwork === "mainnet")],
+    cellDeps: configuredJoyIdCellDep(),
     headerDeps: [],
     inputs: funding.inputs,
     outputs: [
@@ -255,6 +260,33 @@ function buildDeploymentTransaction(
     outputsData: [...scripts.map((script) => script.data_hex), "0x"],
     witnesses: [emptyWitness(), ...funding.inputs.slice(1).map(() => "0x")],
   };
+}
+
+function configuredJoyIdCellDep(): CellDep[] {
+  if (!JOYID_CELL_DEP_TX_HASH?.trim()) return [];
+  if (JOYID_CELL_DEP_TYPE !== "dep_group" && JOYID_CELL_DEP_TYPE !== "code") {
+    throw new Error("NEXT_PUBLIC_JOYID_CELL_DEP_TYPE must be dep_group or code.");
+  }
+  return [
+    {
+      outPoint: {
+        txHash: JOYID_CELL_DEP_TX_HASH.trim(),
+        index: JOYID_CELL_DEP_INDEX,
+      },
+      depType: JOYID_CELL_DEP_TYPE === "dep_group" ? "depGroup" : "code",
+    },
+  ];
+}
+
+function withResolvedJoyIdCellDep(tx: CKBTransaction): CKBTransaction {
+  if (tx.cellDeps.length > 0) return tx;
+  const deps = configuredJoyIdCellDep();
+  if (deps.length > 0) {
+    return { ...tx, cellDeps: deps };
+  }
+  throw new Error(
+    "JoyID returned no CKB cell dep for raw signing. Set NEXT_PUBLIC_JOYID_CELL_DEP_TX_HASH to the current JoyID testnet dep out-point from Pudge explorer.",
+  );
 }
 
 function requiredDeploymentCapacity(scripts: DeploymentPackageScript[]) {
