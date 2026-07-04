@@ -222,7 +222,7 @@ type Service = {
   icon: typeof CircleDollarSign;
 };
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:18080";
 const DEFAULT_ASSET = "CKB";
 const DEPLOYMENT_POPUP_POOL_SIZE = 5;
 const TOKEN_KEY = "liquidlane_token";
@@ -740,6 +740,18 @@ export default function Home() {
             );
           })}
         </div>
+        {!dashboard && hasSavedAddress ? (
+          <div className="service-deployment">
+            <DeploymentPanel
+              vault={vault}
+              ckbAddress={ckbAddress}
+              busy={busy}
+              deploymentNotice={deploymentNotice}
+              deployment={deployment}
+              onDeploy={deployScriptsToTestnet}
+            />
+          </div>
+        ) : null}
       </section>
 
       {dashboard ? (
@@ -814,46 +826,14 @@ export default function Home() {
             ) : null}
 
             {showDeploy ? (
-              <article className="deployment-card">
-                <span className="icon"><UploadCloud size={20} /></span>
-                <h2>Deploy CKB scripts</h2>
-                <div className="deployment-summary">
-                  <Metric label="Network" value={vault?.network ?? "testnet"} />
-                  <Metric label="Package" value="5 scripts" />
-                  <Metric label="Signer" value={ckbAddress ? shortAddress(ckbAddress) : "JoyID"} />
-                </div>
-                <button type="button" onClick={deployScriptsToTestnet} disabled={busy === "deploy-scripts"}>
-                  {busy === "deploy-scripts" ? <Loader2 className="spin" size={16} /> : <FileCode2 size={16} />} Deploy to testnet
-                </button>
-                {deploymentNotice ? <p className="deployment-notice">{deploymentNotice}</p> : null}
-                {deployment ? (
-                  <div className="deployment-record">
-                    <div>
-                      <span>{deployment.transactions.length === 1 ? "Transaction" : "Transactions"}</span>
-                      <div className="deployment-links">
-                        {deployment.transactions.map((transaction) => (
-                          <a key={transaction.txHash} href={transaction.explorerUrl} target="_blank" rel="noreferrer">
-                            <ExternalLink size={14} /> {shortHash(transaction.txHash)}
-                          </a>
-                        ))}
-                      </div>
-                    </div>
-                    <div>
-                      <span>Capacity</span>
-                      <strong>{deployment.deployedCkb}</strong>
-                    </div>
-                    <div className="script-records">
-                      {deployment.scripts.map((script) => (
-                        <div key={script.name}>
-                          <strong>{script.name}</strong>
-                          <code>{shortHash(script.outPoint)}</code>
-                          <code>{shortHash(script.codeHash)}</code>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-              </article>
+              <DeploymentPanel
+                vault={vault}
+                ckbAddress={ckbAddress}
+                busy={busy}
+                deploymentNotice={deploymentNotice}
+                deployment={deployment}
+                onDeploy={deployScriptsToTestnet}
+              />
             ) : null}
           </section>
 
@@ -1053,6 +1033,60 @@ function shortHash(hash: string) {
 function shortId(id: string) {
   if (id.length <= 22) return id;
   return `${id.slice(0, 12)}...${id.slice(-8)}`;
+}
+
+type DeploymentPanelProps = {
+  vault: VaultConfig | VaultSummary | null;
+  ckbAddress: string | null;
+  busy: string | null;
+  deploymentNotice: string | null;
+  deployment: DeploymentResult | null;
+  onDeploy: () => void;
+};
+
+function DeploymentPanel({ vault, ckbAddress, busy, deploymentNotice, deployment, onDeploy }: DeploymentPanelProps) {
+  return (
+    <article className="deployment-card">
+      <span className="icon"><UploadCloud size={20} /></span>
+      <h2>Deploy CKB scripts</h2>
+      <div className="deployment-summary">
+        <Metric label="Network" value={vault?.network ?? "testnet"} />
+        <Metric label="Package" value="5 scripts" />
+        <Metric label="Signer" value={ckbAddress ? shortAddress(ckbAddress) : "JoyID"} />
+      </div>
+      <button type="button" onClick={onDeploy} disabled={busy === "deploy-scripts"}>
+        {busy === "deploy-scripts" ? <Loader2 className="spin" size={16} /> : <FileCode2 size={16} />} Deploy to testnet
+      </button>
+      {deploymentNotice ? <p className="deployment-notice">{deploymentNotice}</p> : null}
+      {deployment ? (
+        <div className="deployment-record">
+          <div>
+            <span>{deployment.transactions.length === 1 ? "Transaction" : "Transactions"}</span>
+            <div className="deployment-links">
+              {deployment.transactions.map((transaction) => (
+                <a key={transaction.txHash} href={transaction.explorerUrl} target="_blank" rel="noreferrer">
+                  <ExternalLink size={14} /> {shortHash(transaction.txHash)}
+                </a>
+              ))}
+            </div>
+          </div>
+          <div>
+            <span>Capacity</span>
+            <strong>{deployment.deployedCkb}</strong>
+          </div>
+          <div className="script-records">
+            {deployment.scripts.map((script) => (
+              <div key={script.name}>
+                <strong>{script.name}</strong>
+                <code>{shortHash(script.outPoint)}</code>
+                <code>{shortHash(script.codeHash)}</code>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </article>
+  );
 }
 
 function openJoyIdPopupPool(size: number): JoyIdPopup[] {
