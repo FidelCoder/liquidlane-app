@@ -284,6 +284,13 @@ h3 { font-size: 1.24rem; line-height: 1.1; margin-bottom: 10px; }
   gap: 6px;
   text-decoration: none;
 }
+.deployment-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  justify-content: flex-end;
+  min-width: 0;
+}
 .script-records { display: grid; gap: 8px; }
 .script-records > div {
   background: var(--surface-soft);

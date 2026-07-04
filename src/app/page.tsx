@@ -21,7 +21,7 @@ import {
   UserRound,
   Waves,
 } from "lucide-react";
-import { deployCkbScripts, type DeploymentResult } from "@/lib/ckbDeployment";
+import { deployCkbScripts, type DeploymentProgressDetail, type DeploymentResult } from "@/lib/ckbDeployment";
 import {
   connectCkbWallet,
   openJoyIdPopup,
@@ -599,15 +599,16 @@ export default function Home() {
       setStatus("Preparing CKB script deployment package.");
       const result = await deployCkbScripts(API_BASE, activeWallet, {
         popup,
-        onProgress(step) {
-          const message = deploymentStepMessage(step);
+        onProgress(step, detail) {
+          const message = deploymentStepMessage(step, detail);
           setDeploymentNotice(message);
           setStatus(message);
         },
       });
       setDeployment(result);
-      setDeploymentNotice(`Deployment broadcast ${shortHash(result.txHash)}. Track it on CKB testnet explorer.`);
-      setStatus(`Deployment broadcast ${shortHash(result.txHash)}. Track it on CKB testnet explorer.`);
+      const transactionLabel = result.transactions.length === 1 ? shortHash(result.txHash) : `${result.transactions.length} deployment transactions`;
+      setDeploymentNotice(`Deployment broadcast ${transactionLabel}. Track it on CKB testnet explorer.`);
+      setStatus(`Deployment broadcast ${transactionLabel}. Track it on CKB testnet explorer.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "CKB script deployment failed.";
       setDeploymentNotice(message);
@@ -822,8 +823,14 @@ export default function Home() {
                 {deployment ? (
                   <div className="deployment-record">
                     <div>
-                      <span>Transaction</span>
-                      <a href={deployment.explorerUrl} target="_blank" rel="noreferrer"><ExternalLink size={14} /> {shortHash(deployment.txHash)}</a>
+                      <span>{deployment.transactions.length === 1 ? "Transaction" : "Transactions"}</span>
+                      <div className="deployment-links">
+                        {deployment.transactions.map((transaction) => (
+                          <a key={transaction.txHash} href={transaction.explorerUrl} target="_blank" rel="noreferrer">
+                            <ExternalLink size={14} /> {shortHash(transaction.txHash)}
+                          </a>
+                        ))}
+                      </div>
                     </div>
                     <div>
                       <span>Capacity</span>
@@ -1061,11 +1068,12 @@ function statusLabel(status: string) {
   return status.replaceAll("_", " ");
 }
 
-function deploymentStepMessage(step: "package" | "funding" | "signing" | "broadcast") {
+function deploymentStepMessage(step: "package" | "funding" | "signing" | "broadcast", detail?: DeploymentProgressDetail) {
+  const counter = detail && detail.total > 1 ? ` ${detail.current}/${detail.total}` : "";
   if (step === "package") return "Loading compiled CKB script package from Core.";
-  if (step === "funding") return "Checking JoyID testnet cells for deployment capacity.";
-  if (step === "signing") return "Confirm the raw CKB deployment transaction in JoyID.";
-  return "Broadcasting deployment transaction to CKB testnet.";
+  if (step === "funding") return "Planning single-input JoyID deployment transactions.";
+  if (step === "signing") return `Confirm CKB script deployment${counter} in JoyID.`;
+  return `Broadcasting CKB script deployment${counter} to testnet.`;
 }
 
 function statusMessage(request: LiquidityRequest) {

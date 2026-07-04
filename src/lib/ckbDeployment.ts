@@ -94,6 +94,12 @@ type DeploymentFunding = {
   totalCapacity: bigint;
 };
 
+type DeploymentTransactionPlan = {
+  scripts: DeploymentPackageScript[];
+  funding: DeploymentFunding;
+  requiredCapacity: bigint;
+};
+
 export type DeploymentRecordScript = {
   name: string;
   codeHash: string;
@@ -103,9 +109,15 @@ export type DeploymentRecordScript = {
   explorerUrl: string;
 };
 
+export type DeploymentTransactionRecord = {
+  txHash: string;
+  explorerUrl: string;
+};
+
 export type DeploymentResult = {
   txHash: string;
   explorerUrl: string;
+  transactions: DeploymentTransactionRecord[];
   requiredCkb: string;
   deployedCkb: string;
   scripts: DeploymentRecordScript[];
@@ -113,9 +125,15 @@ export type DeploymentResult = {
 
 export type DeploymentProgress = "package" | "funding" | "signing" | "broadcast";
 
+export type DeploymentProgressDetail = {
+  current: number;
+  total: number;
+  scriptName: string;
+};
+
 export type DeploymentOptions = {
   popup?: JoyIdPopup;
-  onProgress?: (step: DeploymentProgress) => void;
+  onProgress?: (step: DeploymentProgress, detail?: DeploymentProgressDetail) => void;
 };
 
 export async function deployCkbScripts(
@@ -132,31 +150,46 @@ export async function deployCkbScripts(
 
     const deployerLock = addressToJoyScript(addressToScript(wallet.ckbAddress));
     const joyIdCellDeps = await resolveJoyIdCellDeps();
-    const requiredCapacity = requiredDeploymentCapacity(deploymentPackage.scripts);
     options.onProgress?.("funding");
-    const funding = await collectFundingCells(deployerLock, requiredCapacity);
-    const tx = buildDeploymentTransaction(deployerLock, deploymentPackage.scripts, funding, requiredCapacity, joyIdCellDeps);
-    const joyIdWitnessIndexes = funding.inputs.map((_, index) => index);
+    const candidates = await collectFundingCandidates(deployerLock);
+    const plans = planDeploymentTransactions(deploymentPackage.scripts, candidates);
 
-    options.onProgress?.("signing");
-    const signedTx = await signRawCkbTransaction(wallet, tx, joyIdWitnessIndexes, options.popup);
-    const txToBroadcast = withResolvedJoyIdCellDep(signedTx, joyIdCellDeps);
-    options.onProgress?.("broadcast");
-    const txHash = await broadcastCkbTransaction(txToBroadcast);
+    const transactions: DeploymentTransactionRecord[] = [];
+    const records: DeploymentRecordScript[] = [];
+    let totalRequiredCapacity = BigInt(0);
+    let totalDeployedCapacity = BigInt(0);
+
+    for (let planIndex = 0; planIndex < plans.length; planIndex += 1) {
+      const plan = plans[planIndex];
+      const detail = deploymentProgressDetail(plan, planIndex, plans.length);
+      const tx = buildDeploymentTransaction(deployerLock, plan.scripts, plan.funding, plan.requiredCapacity, joyIdCellDeps);
+      const joyIdWitnessIndexes = plan.funding.inputs.map((_, index) => index);
+
+      options.onProgress?.("signing", detail);
+      const signedTx = await signRawCkbTransaction(wallet, tx, joyIdWitnessIndexes, options.popup);
+      const txToBroadcast = withResolvedJoyIdCellDep(signedTx, joyIdCellDeps);
+      options.onProgress?.("broadcast", detail);
+      const txHash = await broadcastCkbTransaction(txToBroadcast);
+      const explorerUrl = transactionExplorerUrl(txHash);
+
+      transactions.push({ txHash, explorerUrl });
+      records.push(...deploymentScriptRecords(plan.scripts, txHash, explorerUrl));
+      totalRequiredCapacity += plan.requiredCapacity;
+      totalDeployedCapacity += codeCellCapacity(plan.scripts);
+    }
+
+    const firstTransaction = transactions[0];
+    if (!firstTransaction) {
+      throw new Error("No deployment transactions were produced from the CKB script package.");
+    }
 
     return {
-      txHash,
-      explorerUrl: transactionExplorerUrl(txHash),
-      requiredCkb: formatCkb(requiredCapacity),
-      deployedCkb: formatCkb(codeCellCapacity(deploymentPackage.scripts)),
-      scripts: deploymentPackage.scripts.map((script, index) => ({
-        name: script.name,
-        codeHash: script.ckb_data_hash,
-        hashType: script.hash_type,
-        outputIndex: toHex(BigInt(index)),
-        outPoint: `${txHash}#${toHex(BigInt(index))}`,
-        explorerUrl: transactionExplorerUrl(txHash),
-      })),
+      txHash: firstTransaction.txHash,
+      explorerUrl: firstTransaction.explorerUrl,
+      transactions,
+      requiredCkb: formatCkb(totalRequiredCapacity),
+      deployedCkb: formatCkb(totalDeployedCapacity),
+      scripts: records,
     };
   } catch (error) {
     closeUnusedPopup(options.popup);
@@ -177,7 +210,7 @@ async function fetchDeploymentPackage(apiBase: string): Promise<DeploymentPackag
   return body;
 }
 
-async function collectFundingCells(lock: JoyScript, requiredCapacity: bigint): Promise<DeploymentFunding> {
+async function collectFundingCandidates(lock: JoyScript): Promise<FundingCandidate[]> {
   if (!ckbRpcURL?.trim()) {
     throw new Error("NEXT_PUBLIC_CKB_RPC_URL is required for testnet deployment.");
   }
@@ -203,38 +236,89 @@ async function collectFundingCells(lock: JoyScript, requiredCapacity: bigint): P
     cursor = result.last_cursor;
   }
 
-  const funding = selectFundingCells(candidates, requiredCapacity);
-  if (!funding) {
-    throw new Error(`Fund JoyID with at least ${formatCkb(requiredCapacity)} for script deployment. Found ${formatCkb(totalCandidateCapacity(candidates))} spendable CKB.`);
-  }
-
-  return funding;
+  return candidates;
 }
 
-function selectFundingCells(candidates: FundingCandidate[], requiredCapacity: bigint): DeploymentFunding | null {
+function planDeploymentTransactions(
+  scripts: DeploymentPackageScript[],
+  candidates: FundingCandidate[],
+): DeploymentTransactionPlan[] {
+  const fullRequiredCapacity = requiredDeploymentCapacity(scripts);
+  const fullFunding = selectSingleFundingCell(candidates, fullRequiredCapacity);
+  if (fullFunding) {
+    return [{ scripts, funding: fullFunding, requiredCapacity: fullRequiredCapacity }];
+  }
+
+  const remainingScripts = [...scripts].sort((left, right) => compareCapacityDesc(scriptCellCapacity(left), scriptCellCapacity(right)));
+  const plans: DeploymentTransactionPlan[] = [];
+
+  for (const candidate of [...candidates].sort((left, right) => compareCapacityDesc(left.capacity, right.capacity))) {
+    const plannedScripts: DeploymentPackageScript[] = [];
+    let codeCapacity = BigInt(0);
+    let index = 0;
+
+    while (index < remainingScripts.length) {
+      const script = remainingScripts[index];
+      const nextCodeCapacity = codeCapacity + scriptCellCapacity(script);
+      const nextRequiredCapacity = nextCodeCapacity + deploymentFixedCapacity();
+      if (nextRequiredCapacity <= candidate.capacity) {
+        plannedScripts.push(script);
+        codeCapacity = nextCodeCapacity;
+        remainingScripts.splice(index, 1);
+      } else {
+        index += 1;
+      }
+    }
+
+    if (plannedScripts.length > 0) {
+      plans.push({
+        scripts: plannedScripts,
+        funding: { inputs: [toDeploymentInput(candidate)], totalCapacity: candidate.capacity },
+        requiredCapacity: codeCapacity + deploymentFixedCapacity(),
+      });
+    }
+    if (remainingScripts.length === 0) return plans;
+  }
+
+  throw new Error(splitDeploymentFundingError(candidates, remainingScripts));
+}
+
+function deploymentProgressDetail(
+  plan: DeploymentTransactionPlan,
+  planIndex: number,
+  planCount: number,
+): DeploymentProgressDetail {
+  return {
+    current: planIndex + 1,
+    total: planCount,
+    scriptName: plan.scripts.map((script) => script.name).join(", "),
+  };
+}
+
+function deploymentScriptRecords(
+  scripts: DeploymentPackageScript[],
+  txHash: string,
+  explorerUrl: string,
+): DeploymentRecordScript[] {
+  return scripts.map((script, index) => ({
+    name: script.name,
+    codeHash: script.ckb_data_hash,
+    hashType: script.hash_type,
+    outputIndex: toHex(BigInt(index)),
+    outPoint: `${txHash}#${toHex(BigInt(index))}`,
+    explorerUrl,
+  }));
+}
+
+function selectSingleFundingCell(candidates: FundingCandidate[], requiredCapacity: bigint): DeploymentFunding | null {
   const single = candidates
     .filter((candidate) => candidate.capacity >= requiredCapacity)
     .sort((left, right) => compareCapacityAsc(left.capacity, right.capacity))[0];
 
-  if (single) {
-    return {
-      inputs: [toDeploymentInput(single)],
-      totalCapacity: single.capacity,
-    };
-  }
-
-  const selected: FundingCandidate[] = [];
-  let totalCapacity = BigInt(0);
-  for (const candidate of [...candidates].sort((left, right) => compareCapacityDesc(left.capacity, right.capacity))) {
-    selected.push(candidate);
-    totalCapacity += candidate.capacity;
-    if (totalCapacity >= requiredCapacity) break;
-  }
-
-  if (totalCapacity < requiredCapacity) return null;
+  if (!single) return null;
   return {
-    inputs: selected.map(toDeploymentInput),
-    totalCapacity,
+    inputs: [toDeploymentInput(single)],
+    totalCapacity: single.capacity,
   };
 }
 
@@ -243,6 +327,15 @@ function toDeploymentInput(candidate: FundingCandidate): DeploymentInput {
     previousOutput: candidate.previousOutput,
     since: candidate.since,
   };
+}
+
+function splitDeploymentFundingError(candidates: FundingCandidate[], remainingScripts: DeploymentPackageScript[]) {
+  const largestCell = candidates.reduce((largest, candidate) => (candidate.capacity > largest ? candidate.capacity : largest), BigInt(0));
+  const neededForLargestScript = remainingScripts.reduce((needed, script) => {
+    const required = requiredDeploymentCapacity([script]);
+    return required > needed ? required : needed;
+  }, BigInt(0));
+  return `JoyID deployment uses single-input transactions, but the current clean CKB cells cannot fit ${remainingScripts.length} script(s). Largest clean cell: ${formatCkb(largestCell)}. Total clean CKB: ${formatCkb(totalCandidateCapacity(candidates))}. Add or consolidate a clean cell of at least ${formatCkb(neededForLargestScript)} and retry.`;
 }
 
 function totalCandidateCapacity(candidates: FundingCandidate[]) {
@@ -386,7 +479,11 @@ function withResolvedJoyIdCellDep(tx: CKBTransaction, fallbackDeps: CellDep[]): 
 }
 
 function requiredDeploymentCapacity(scripts: DeploymentPackageScript[]) {
-  return codeCellCapacity(scripts) + CHANGE_CELL_CKB * SHANNONS_PER_CKB + DEPLOY_FEE_CKB * SHANNONS_PER_CKB;
+  return codeCellCapacity(scripts) + deploymentFixedCapacity();
+}
+
+function deploymentFixedCapacity() {
+  return (CHANGE_CELL_CKB + DEPLOY_FEE_CKB) * SHANNONS_PER_CKB;
 }
 
 function codeCellCapacity(scripts: DeploymentPackageScript[]) {
