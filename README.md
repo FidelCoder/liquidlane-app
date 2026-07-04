@@ -43,6 +43,8 @@ Operators can deploy LiquidLane CKB script binaries from the app with JoyID. Cor
 
 This keeps deployer keys inside JoyID. The app does not ask for private keys or mnemonics.
 
+If raw signing returns no JoyID cell dep, set `NEXT_PUBLIC_JOYID_CELL_DEP_TX_HASH`, `NEXT_PUBLIC_JOYID_CELL_DEP_INDEX`, and `NEXT_PUBLIC_JOYID_CELL_DEP_TYPE` from the current JoyID testnet script record on Pudge explorer.
+
 ## Checks
 
 ```bash
