@@ -43,7 +43,7 @@ Operators can deploy LiquidLane CKB script binaries from the app with JoyID. Cor
 
 This keeps deployer keys inside JoyID. The app does not ask for private keys or mnemonics.
 
-If raw signing returns no JoyID cell dep, set `NEXT_PUBLIC_JOYID_CELL_DEP_TX_HASH`, `NEXT_PUBLIC_JOYID_CELL_DEP_INDEX`, and `NEXT_PUBLIC_JOYID_CELL_DEP_TYPE` from the current JoyID testnet script record on Pudge explorer.
+LiquidLane defaults to the current verified JoyID Pudge code cell `0x4a596d31dc35e88fb1591debbf680b04a44b4a434e3a94453c21ea8950ffb4d9#0x0` with dep type `code`, and validates it with `get_live_cell` before signing. Override `NEXT_PUBLIC_JOYID_CELL_DEP_TX_HASH`, `NEXT_PUBLIC_JOYID_CELL_DEP_INDEX`, and `NEXT_PUBLIC_JOYID_CELL_DEP_TYPE` only if JoyID rotates the testnet deployment again.
 
 ## Checks
 
