@@ -476,10 +476,36 @@ async function assertLiveCellDep(dep: CellDep) {
 
 function assertSignedRawTransactionMatches(unsignedTx: CKBTransaction, signedTx: CKBTransaction) {
   const rawFields = (tx: CKBTransaction) => JSON.stringify({
-    cellDeps: tx.cellDeps,
+    cellDeps: tx.cellDeps.map((dep) => ({
+      outPoint: {
+        txHash: dep.outPoint.txHash,
+        index: dep.outPoint.index,
+      },
+      depType: dep.depType,
+    })),
     headerDeps: tx.headerDeps,
-    inputs: tx.inputs,
-    outputs: tx.outputs,
+    inputs: tx.inputs.map((input) => ({
+      previousOutput: {
+        txHash: input.previousOutput.txHash,
+        index: input.previousOutput.index,
+      },
+      since: input.since,
+    })),
+    outputs: tx.outputs.map((output) => ({
+      capacity: output.capacity,
+      lock: {
+        codeHash: output.lock.codeHash,
+        hashType: output.lock.hashType,
+        args: output.lock.args,
+      },
+      type: output.type
+        ? {
+            codeHash: output.type.codeHash,
+            hashType: output.type.hashType,
+            args: output.type.args,
+          }
+        : null,
+    })),
     outputsData: tx.outputsData,
     version: tx.version,
   });
