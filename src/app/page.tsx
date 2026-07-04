@@ -22,10 +22,10 @@ import {
   Waves,
 } from "lucide-react";
 import { deployCkbScripts, type DeploymentProgressDetail, type DeploymentResult } from "@/lib/ckbDeployment";
+import { supplyVaultLiquidity } from "@/lib/ckbSupply";
 import {
   connectCkbWallet,
   openJoyIdPopup,
-  signSupplyTransaction,
   type ConnectedCkbWallet,
   type JoyIdPopup,
 } from "@/lib/ckbWallet";
@@ -48,15 +48,21 @@ type AuthResponse = {
 
 type VaultScripts = {
   vault_lock_code_hash: string | null;
+  vault_lock_out_point: string | null;
   vault_type_code_hash: string | null;
+  vault_type_out_point: string | null;
   lp_receipt_type_code_hash: string | null;
+  lp_receipt_type_out_point: string | null;
   request_type_code_hash: string | null;
+  request_type_out_point: string | null;
   fee_claim_type_code_hash: string | null;
+  fee_claim_type_out_point: string | null;
 };
 
 type VaultConfig = {
   asset: string;
   address: string | null;
+  cell_out_point?: string | null;
   network: string;
   configured: boolean;
   scripts?: VaultScripts;
@@ -497,12 +503,12 @@ export default function Home() {
         body: JSON.stringify({ asset, amount }),
       });
 
-      setStatus("Confirm the vault transaction in your CKB wallet.");
-      const signed = await signSupplyTransaction(activeWallet, {
+      setStatus("Building the CKB vault transaction.");
+      const signed = await supplyVaultLiquidity(activeWallet, {
+        vault: activeVault,
+        intent,
         asset,
         amount,
-        to: intent.vault_address,
-        memo: intent.memo,
       }, signPopup);
 
       await request<Deposit>("/deposits", {
@@ -516,7 +522,7 @@ export default function Home() {
         }),
       });
       event.currentTarget.reset();
-      setStatus(`Supplied ${assetAmount(amount, asset)} to ${shortAddress(intent.vault_address)}${signed.txHash ? ` (${shortHash(signed.txHash)})` : ""}.`);
+      setStatus(`Supplied ${assetAmount(amount, asset)} to ${shortAddress(intent.vault_address)} (${shortHash(signed.txHash)}).`);
       await refresh();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Supply failed.");
