@@ -354,9 +354,16 @@ export default function Home() {
 
   async function connectWallet() {
     setBusy("connect");
+    const popup = openJoyIdPopup();
+    if (!popup) {
+      setBusy(null);
+      setStatus("Browser blocked the JoyID popup. Enable popups for localhost and try again.");
+      return;
+    }
+
     try {
       setStatus(ckbAddress ? "Opening JoyID to reconnect your signer." : "Opening JoyID wallet.");
-      const connected = await connectCkbWallet();
+      const connected = await connectCkbWallet(popup);
       setWallet(connected);
       setCkbAddress(connected.ckbAddress);
       window.localStorage.setItem(ADDRESS_KEY, connected.ckbAddress);
@@ -379,7 +386,12 @@ export default function Home() {
     try {
       let activeWallet = wallet;
       if (!activeWallet) {
-        activeWallet = await connectCkbWallet();
+        const popup = openJoyIdPopup();
+        if (!popup) {
+          throw new Error("Browser blocked the JoyID popup. Enable popups for localhost and try again.");
+        }
+        setStatus("Opening JoyID to connect your signer.");
+        activeWallet = await connectCkbWallet(popup);
         setWallet(activeWallet);
         setCkbAddress(activeWallet.ckbAddress);
         window.localStorage.setItem(ADDRESS_KEY, activeWallet.ckbAddress);
@@ -456,14 +468,25 @@ export default function Home() {
 
       let activeWallet = wallet;
       if (!activeWallet) {
-        setStatus("Reconnect your CKB wallet to sign the supply transaction.");
-        activeWallet = await connectCkbWallet();
+        const popup = openJoyIdPopup();
+        if (!popup) {
+          throw new Error("Browser blocked the JoyID popup. Enable popups for localhost and try again.");
+        }
+        setStatus("Opening JoyID to reconnect your signer.");
+        activeWallet = await connectCkbWallet(popup);
         if (dashboard?.user.ckb_address && activeWallet.ckbAddress !== dashboard.user.ckb_address) {
           throw new Error("Connected wallet does not match this LiquidLane session.");
         }
         setWallet(activeWallet);
         setCkbAddress(activeWallet.ckbAddress);
         window.localStorage.setItem(ADDRESS_KEY, activeWallet.ckbAddress);
+        setStatus("JoyID reconnected. Click Confirm supply again to sign the vault transaction.");
+        return;
+      }
+
+      const signPopup = openJoyIdPopup();
+      if (!signPopup) {
+        throw new Error("Browser blocked the JoyID popup. Enable popups for localhost and try again.");
       }
 
       setStatus("Preparing the vault supply intent.");
@@ -478,7 +501,7 @@ export default function Home() {
         amount,
         to: intent.vault_address,
         memo: intent.memo,
-      });
+      }, signPopup);
 
       await request<Deposit>("/deposits", {
         method: "POST",
@@ -560,14 +583,17 @@ export default function Home() {
     try {
       let activeWallet = wallet;
       if (!activeWallet) {
-        setStatus("Reconnect your CKB wallet to sign the deployment transaction.");
-        activeWallet = await connectCkbWallet();
+        setStatus("Opening JoyID to reconnect your signer.");
+        activeWallet = await connectCkbWallet(popup);
         if (dashboard?.user.ckb_address && activeWallet.ckbAddress !== dashboard.user.ckb_address) {
           throw new Error("Connected wallet does not match this LiquidLane session.");
         }
         setWallet(activeWallet);
         setCkbAddress(activeWallet.ckbAddress);
         window.localStorage.setItem(ADDRESS_KEY, activeWallet.ckbAddress);
+        setDeploymentNotice("JoyID reconnected. Click Deploy to testnet again to sign the deployment transaction.");
+        setStatus("JoyID reconnected. Click Deploy to testnet again to sign the deployment transaction.");
+        return;
       }
 
       setStatus("Preparing CKB script deployment package.");

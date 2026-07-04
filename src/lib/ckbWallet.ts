@@ -50,7 +50,7 @@ const joyidAppURL = process.env.NEXT_PUBLIC_JOYID_APP_URL ?? (ckbNetwork === "ma
 const joyidServerURL = process.env.NEXT_PUBLIC_JOYID_SERVER_URL ?? (ckbNetwork === "mainnet" ? "https://api.joy.id/api/v1" : "https://api.testnet.joyid.dev/api/v1");
 export const ckbRpcURL = process.env.NEXT_PUBLIC_CKB_RPC_URL;
 
-export async function connectCkbWallet(): Promise<ConnectedCkbWallet> {
+export async function connectCkbWallet(popup?: JoyIdPopup): Promise<ConnectedCkbWallet> {
   configureJoyID();
 
   const connection = await connect({
@@ -59,6 +59,8 @@ export async function connectCkbWallet(): Promise<ConnectedCkbWallet> {
     joyidAppURL,
     joyidServerURL,
     rpcURL: ckbRpcURL,
+    popup: popup ?? undefined,
+    timeoutInSeconds: 300,
   });
 
   return walletFromConnection(connection);
@@ -84,6 +86,7 @@ export async function signCkbChallenge(challengeMessage: string, wallet: Connect
 export async function signSupplyTransaction(
   wallet: ConnectedCkbWallet,
   request: SupplyTransactionRequest,
+  popup?: JoyIdPopup,
 ): Promise<SignedSupplyTransaction> {
   configureJoyID();
 
@@ -112,6 +115,7 @@ export async function signSupplyTransaction(
       joyidAppURL,
       joyidServerURL,
       rpcURL: ckbRpcURL,
+      popup: popup ?? undefined,
       timeoutInSeconds: 120,
     },
   );
