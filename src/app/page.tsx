@@ -340,7 +340,14 @@ export default function Home() {
 
   useEffect(() => {
     loadVault();
+    const savedAddress = window.localStorage.getItem(ADDRESS_KEY)?.trim();
     const savedToken = window.localStorage.getItem(TOKEN_KEY);
+    if (savedAddress) {
+      setCkbAddress(savedAddress);
+      if (!savedToken) {
+        setStatus("Wallet restored. Choose the service you want to use.");
+      }
+    }
     if (savedToken) {
       setToken(savedToken);
       refresh(savedToken);
@@ -413,6 +420,7 @@ export default function Home() {
     setQuote(null);
     setDeployment(null);
     setDeploymentNotice(null);
+    setCopiedWalletAddress(false);
     setSelectedRole(null);
     setStatus("Signed out. Connect a CKB wallet to choose a service.");
   }
@@ -581,7 +589,7 @@ export default function Home() {
 
   const vault = dashboard?.vault ?? activeVault;
   const vaultSummary = dashboard?.vault;
-  const hasWalletSession = Boolean(wallet || dashboard);
+  const hasWalletSession = Boolean(wallet || dashboard || ckbAddress);
   const utilization = useMemo(() => {
     if (!vaultSummary || vaultSummary.total_deposits === 0) return 0;
     const used = vaultSummary.reserved_liquidity + vaultSummary.pending_channel_liquidity + vaultSummary.deployed_liquidity;
