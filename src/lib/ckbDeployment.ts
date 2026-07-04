@@ -132,9 +132,10 @@ export async function deployCkbScripts(
     options.onProgress?.("funding");
     const funding = await collectFundingCells(deployerLock, requiredCapacity);
     const tx = buildDeploymentTransaction(deployerLock, deploymentPackage.scripts, funding, requiredCapacity, joyIdCellDeps);
+    const joyIdWitnessIndexes = funding.inputs.map((_, index) => index);
 
     options.onProgress?.("signing");
-    const signedTx = await signRawCkbTransaction(wallet, tx, [0], options.popup);
+    const signedTx = await signRawCkbTransaction(wallet, tx, joyIdWitnessIndexes, options.popup);
     const txToBroadcast = withResolvedJoyIdCellDep(signedTx, joyIdCellDeps);
     options.onProgress?.("broadcast");
     const txHash = await broadcastCkbTransaction(txToBroadcast);
