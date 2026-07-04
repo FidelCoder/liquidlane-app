@@ -210,6 +210,15 @@ h3 { font-size: 1.24rem; line-height: 1.1; margin-bottom: 10px; }
   justify-content: space-between;
   padding-top: 12px;
 }
+.deployment-notice {
+  background: rgba(8, 132, 124, 0.1);
+  border: 1px solid rgba(8, 132, 124, 0.18);
+  border-radius: 8px;
+  color: var(--accent-strong);
+  line-height: 1.45;
+  margin: 0;
+  padding: 10px 12px;
+}
 .deployment-record a {
   align-items: center;
   color: var(--accent-strong);

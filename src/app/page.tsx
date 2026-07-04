@@ -21,7 +21,12 @@ import {
   Waves,
 } from "lucide-react";
 import { deployCkbScripts, type DeploymentResult } from "@/lib/ckbDeployment";
-import { connectCkbWallet, signSupplyTransaction, type ConnectedCkbWallet } from "@/lib/ckbWallet";
+import {
+  connectCkbWallet,
+  openJoyIdPopup,
+  signSupplyTransaction,
+  type ConnectedCkbWallet,
+} from "@/lib/ckbWallet";
 
 type Role = "lp" | "merchant" | "operator";
 type LiquidityStatus = "requested" | "pending_fiber_channel" | "channel_open" | "failed";
@@ -250,6 +255,7 @@ export default function Home() {
   const [activeVault, setActiveVault] = useState<VaultConfig | null>(null);
   const [quote, setQuote] = useState<LiquidityQuote | null>(null);
   const [deployment, setDeployment] = useState<DeploymentResult | null>(null);
+  const [deploymentNotice, setDeploymentNotice] = useState<string | null>(null);
   const [wallet, setWallet] = useState<ConnectedCkbWallet | null>(null);
   const [ckbAddress, setCkbAddress] = useState<string | null>(null);
   const [selectedRole, setSelectedRole] = useState<Role | null>(null);
@@ -404,6 +410,7 @@ export default function Home() {
     setDashboard(null);
     setQuote(null);
     setDeployment(null);
+    setDeploymentNotice(null);
     setSelectedRole(null);
     setStatus("Signed out. Connect a CKB wallet to choose a service.");
   }
@@ -517,6 +524,14 @@ export default function Home() {
 
   async function deployScriptsToTestnet() {
     setBusy("deploy-scripts");
+    setDeploymentNotice("Opening JoyID and preparing deployment.");
+    const popup = openJoyIdPopup();
+    if (!popup) {
+      setBusy(null);
+      setDeploymentNotice("Browser blocked the JoyID popup. Enable popups for localhost and try again.");
+      setStatus("Browser blocked the JoyID popup. Enable popups for localhost and try again.");
+      return;
+    }
     try {
       let activeWallet = wallet;
       if (!activeWallet) {
@@ -531,11 +546,21 @@ export default function Home() {
       }
 
       setStatus("Preparing CKB script deployment package.");
-      const result = await deployCkbScripts(API_BASE, activeWallet);
+      const result = await deployCkbScripts(API_BASE, activeWallet, {
+        popup,
+        onProgress(step) {
+          const message = deploymentStepMessage(step);
+          setDeploymentNotice(message);
+          setStatus(message);
+        },
+      });
       setDeployment(result);
+      setDeploymentNotice(`Deployment broadcast ${shortHash(result.txHash)}. Track it on CKB testnet explorer.`);
       setStatus(`Deployment broadcast ${shortHash(result.txHash)}. Track it on CKB testnet explorer.`);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "CKB script deployment failed.");
+      const message = error instanceof Error ? error.message : "CKB script deployment failed.";
+      setDeploymentNotice(message);
+      setStatus(message);
     } finally {
       setBusy(null);
     }
@@ -708,6 +733,7 @@ export default function Home() {
                 <button type="button" onClick={deployScriptsToTestnet} disabled={busy === "deploy-scripts"}>
                   {busy === "deploy-scripts" ? <Loader2 className="spin" size={16} /> : <FileCode2 size={16} />} Deploy to testnet
                 </button>
+                {deploymentNotice ? <p className="deployment-notice">{deploymentNotice}</p> : null}
                 {deployment ? (
                   <div className="deployment-record">
                     <div>
@@ -948,6 +974,13 @@ function serviceLabel(role: Role) {
 
 function statusLabel(status: string) {
   return status.replaceAll("_", " ");
+}
+
+function deploymentStepMessage(step: "package" | "funding" | "signing" | "broadcast") {
+  if (step === "package") return "Loading compiled CKB script package from Core.";
+  if (step === "funding") return "Checking JoyID testnet cells for deployment capacity.";
+  if (step === "signing") return "Confirm the raw CKB deployment transaction in JoyID.";
+  return "Broadcasting deployment transaction to CKB testnet.";
 }
 
 function statusMessage(request: LiquidityRequest) {
