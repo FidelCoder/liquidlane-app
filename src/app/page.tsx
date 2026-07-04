@@ -6,6 +6,7 @@ import {
   Banknote,
   CheckCircle2,
   CircleDollarSign,
+  Copy,
   Landmark,
   ExternalLink,
   FileCode2,
@@ -261,6 +262,7 @@ export default function Home() {
   const [selectedRole, setSelectedRole] = useState<Role | null>(null);
   const [displayName, setDisplayName] = useState("");
   const [status, setStatus] = useState("Connect a CKB wallet to choose a LiquidLane service.");
+  const [copiedWalletAddress, setCopiedWalletAddress] = useState(false);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -413,6 +415,17 @@ export default function Home() {
     setDeploymentNotice(null);
     setSelectedRole(null);
     setStatus("Signed out. Connect a CKB wallet to choose a service.");
+  }
+
+  async function copyWalletAddress(address: string) {
+    try {
+      await navigator.clipboard.writeText(address);
+      setCopiedWalletAddress(true);
+      setStatus("Wallet address copied.");
+      window.setTimeout(() => setCopiedWalletAddress(false), 1500);
+    } catch {
+      setStatus("Could not copy wallet address.");
+    }
   }
 
   async function handleDeposit(event: FormEvent<HTMLFormElement>) {
@@ -591,7 +604,21 @@ export default function Home() {
           <div className="nav-actions">
             {dashboard ? <a href="#workspace">Workspace</a> : <a href="#services">Services</a>}
             <a href="#lifecycle">Lifecycle</a>
-            {hasWalletSession && ckbAddress ? <span className="connected-pill"><UserRound size={15} /> {shortAddress(ckbAddress)}</span> : null}
+            {hasWalletSession && ckbAddress ? (
+              <span className="connected-pill">
+                <UserRound size={15} />
+                <span>{shortAddress(ckbAddress)}</span>
+                <button
+                  type="button"
+                  className="copy-address-button"
+                  aria-label="Copy wallet address"
+                  title="Copy wallet address"
+                  onClick={() => copyWalletAddress(ckbAddress)}
+                >
+                  {copiedWalletAddress ? <CheckCircle2 size={14} /> : <Copy size={14} />}
+                </button>
+              </span>
+            ) : null}
             {hasWalletSession ? (
               <button type="button" className="secondary-button dark" onClick={signOut}><LogOut size={16} /> Disconnect</button>
             ) : (
