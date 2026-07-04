@@ -4,6 +4,7 @@ import {
   broadcastCkbTransaction,
   ckbNetwork,
   ckbRpcURL,
+  showJoyIdPopupStatus,
   signRawCkbTransaction,
   type ConnectedCkbWallet,
   type JoyIdPopup,
@@ -126,10 +127,12 @@ export async function supplyVaultLiquidity(
   }
   const scripts = requiredScripts(options.vault.scripts);
   const userLock = toJoyScript(addressToScript(wallet.ckbAddress));
+  showJoyIdPopupStatus(popup, "Preparing CKB transaction", "Checking the active LiquidLane vault cell on testnet.");
   const vaultCell = await loadVaultCell(options.vault, scripts);
   const receiptType = buildReceiptType(userLock, vaultCell.type, scripts, options.intent);
   const receiptCapacity = occupiedCapacity(userLock, receiptType, RECEIPT_DATA_LEN) + CELL_CAPACITY_PAD;
   const changeCapacity = occupiedCapacity(userLock, null, 0) + CELL_CAPACITY_PAD;
+  showJoyIdPopupStatus(popup, "Preparing CKB transaction", "Collecting clean wallet cells for this supply transaction.");
   const funding = selectFunding(await collectFundingCells(userLock), amount.shannons + receiptCapacity + FEE_MARGIN + changeCapacity);
   const tx = buildSupplyTransaction({
     amount,
@@ -142,6 +145,7 @@ export async function supplyVaultLiquidity(
   });
 
   const witnessIndexes = funding.inputs.map((_, index) => index);
+  showJoyIdPopupStatus(popup, "Opening JoyID", "Review the vault supply transaction and confirm.");
   const signedTx = await signRawCkbTransaction(wallet, tx, witnessIndexes, popup);
   assertSignedRawTransactionMatches(tx, signedTx);
   const txHash = await broadcastCkbTransaction(signedTx);
