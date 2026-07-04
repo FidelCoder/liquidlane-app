@@ -1,5 +1,4 @@
 import {
-  buildSignedTx,
   calculateChallenge,
   connect,
   getJoyIDLockScript,
@@ -11,6 +10,7 @@ import {
   type ConnectResponseData,
   type SignChallengeResponseData,
 } from "@joyid/ckb";
+import { serializeWitnessArgs } from "@nervosnetwork/ckb-sdk-utils";
 
 export type CkbLockScript = {
   code_hash: string;
@@ -154,7 +154,7 @@ export async function signRawCkbTransaction(
     timeoutInSeconds: 300,
   });
 
-  return buildSignedTx(cloneTransaction(tx), signed, witnessIndexes);
+  return buildJoyIdSignedTx(cloneTransaction(tx), signed, witnessIndexes);
 }
 
 export async function broadcastCkbTransaction(tx: CKBTransaction): Promise<string> {
@@ -226,6 +226,18 @@ function toRpcScript(script: { codeHash: string; hashType: string; args: string 
     hash_type: script.hashType,
     args: script.args,
   };
+}
+
+function buildJoyIdSignedTx(
+  unsignedTx: CKBTransaction,
+  signedData: SignChallengeResponseData,
+  witnessIndexes: number[],
+): CKBTransaction {
+  const firstWitnessIndex = witnessIndexes[0] ?? 0;
+  const mode = signedData.keyType.startsWith("sub") ? "02" : "01";
+  const lock = `0x${mode}${signedData.pubkey}${signedData.signature}${signedData.message}`;
+  unsignedTx.witnesses[firstWitnessIndex] = serializeWitnessArgs({ lock, inputType: "0x", outputType: "0x" });
+  return unsignedTx;
 }
 
 function cloneTransaction(tx: CKBTransaction): CKBTransaction {
