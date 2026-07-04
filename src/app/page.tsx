@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
+  AlertTriangle,
   ArrowRight,
   Banknote,
   CheckCircle2,
@@ -22,7 +23,7 @@ import {
   Waves,
 } from "lucide-react";
 import { deployCkbScripts, type DeploymentProgressDetail, type DeploymentResult } from "@/lib/ckbDeployment";
-import { supplyVaultLiquidity } from "@/lib/ckbSupply";
+import { supplyVaultLiquidity, type SupplyProgressStep } from "@/lib/ckbSupply";
 import {
   connectCkbWallet,
   openJoyIdPopup,
@@ -229,8 +230,27 @@ type Service = {
   icon: typeof CircleDollarSign;
 };
 
+type SupplyStepId = "vault" | "intent" | "funding" | "signing" | "broadcast" | "settlement";
+type SupplyTxStatus = "running" | "success" | "failed";
+
+type SupplyTxState = {
+  status: SupplyTxStatus;
+  step: SupplyStepId;
+  title: string;
+  message: string;
+  amount?: number;
+  asset?: string;
+  txHash?: string;
+  explorerUrl?: string;
+  error?: string;
+  updatedAt: string;
+};
+
+type SupplyTxUpdate = Omit<SupplyTxState, "updatedAt">;
+
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:18080";
 const DEFAULT_ASSET = "CKB";
+const EXPLORER_BASE = process.env.NEXT_PUBLIC_CKB_EXPLORER_URL ?? "https://pudge.explorer.nervos.org";
 const DEPLOYMENT_POPUP_POOL_SIZE = 5;
 const TOKEN_KEY = "liquidlane_token";
 const ADDRESS_KEY = "liquidlane_ckb_address";
@@ -274,6 +294,7 @@ export default function Home() {
   const [copiedWalletAddress, setCopiedWalletAddress] = useState(false);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [supplyTx, setSupplyTx] = useState<SupplyTxState | null>(null);
 
 
   const loadVault = useCallback(async function loadVault() {
@@ -445,6 +466,7 @@ export default function Home() {
     setQuote(null);
     setDeployment(null);
     setDeploymentNotice(null);
+    setSupplyTx(null);
     setCopiedWalletAddress(false);
     setSelectedRole(null);
     setStatus("Signed out. Connect a CKB wallet to choose a service.");
@@ -461,11 +483,32 @@ export default function Home() {
     }
   }
 
+  function writeSupplyTx(update: SupplyTxUpdate) {
+    setSupplyTx({
+      ...update,
+      updatedAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+    });
+  }
+
   async function handleDeposit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     const amount = Number(form.get("amount"));
     const asset = String(form.get("asset") ?? DEFAULT_ASSET).trim().toUpperCase();
+    const progressTitle: Record<SupplyProgressStep, string> = {
+      vault: "Checking vault",
+      funding: "Selecting wallet cells",
+      signing: "Waiting for JoyID",
+      broadcast: "Broadcasting transaction",
+    };
+    let currentStep: SupplyStepId = "vault";
+    const safeAmount = Number.isFinite(amount) ? amount : undefined;
+    const writeSupplyState = (update: SupplyTxUpdate) => {
+      currentStep = update.step;
+      writeSupplyTx(update);
+    };
+
     setBusy("deposit");
     let signPopup: JoyIdPopup | undefined;
     try {
@@ -476,12 +519,29 @@ export default function Home() {
         throw new Error("LiquidLane vault is not configured yet.");
       }
 
+      writeSupplyState({
+        status: "running",
+        step: "vault",
+        title: "Checking vault",
+        message: "Loading live LiquidLane scripts and the current vault cell.",
+        amount,
+        asset,
+      });
+
       let activeWallet = wallet;
       if (!activeWallet) {
         const popup = openJoyIdPopup();
         if (!popup) {
           throw new Error("Browser blocked the JoyID popup. Enable popups for localhost and try again.");
         }
+        writeSupplyState({
+          status: "running",
+          step: "signing",
+          title: "Reconnect signer",
+          message: "JoyID needs to reconnect before LiquidLane can prepare the vault transaction.",
+          amount,
+          asset,
+        });
         setStatus("Opening JoyID to reconnect your signer.");
         activeWallet = await connectCkbWallet(popup);
         if (dashboard?.user.ckb_address && activeWallet.ckbAddress !== dashboard.user.ckb_address) {
@@ -490,6 +550,14 @@ export default function Home() {
         setWallet(activeWallet);
         setCkbAddress(activeWallet.ckbAddress);
         window.localStorage.setItem(ADDRESS_KEY, activeWallet.ckbAddress);
+        writeSupplyState({
+          status: "running",
+          step: "signing",
+          title: "Signer reconnected",
+          message: "Click Confirm supply again to sign the vault transaction.",
+          amount,
+          asset,
+        });
         setStatus("JoyID reconnected. Click Confirm supply again to sign the vault transaction.");
         return;
       }
@@ -506,6 +574,14 @@ export default function Home() {
         throw new Error("LiquidLane vault is not configured yet.");
       }
 
+      writeSupplyState({
+        status: "running",
+        step: "intent",
+        title: "Creating supply intent",
+        message: "Core is reserving a vault supply intent for this transaction.",
+        amount,
+        asset,
+      });
       showJoyIdPopupStatus(signPopup, "Preparing supply", "LiquidLane is creating your vault supply intent.");
       setStatus("Preparing the vault supply intent.");
       const intent = await request<SupplyIntent>("/vault/supply/intents", {
@@ -519,8 +595,30 @@ export default function Home() {
         intent,
         asset,
         amount,
+        onProgress(step, message) {
+          writeSupplyState({
+            status: "running",
+            step,
+            title: progressTitle[step],
+            message,
+            amount,
+            asset,
+          });
+          setStatus(message);
+        },
       }, signPopup);
 
+      const explorerUrl = transactionExplorerUrl(signed.txHash);
+      writeSupplyState({
+        status: "running",
+        step: "settlement",
+        title: "Recording LP receipt",
+        message: "CKB RPC accepted the transaction. Core is linking it to your vault position.",
+        amount,
+        asset,
+        txHash: signed.txHash,
+        explorerUrl,
+      });
       await request<Deposit>("/deposits", {
         method: "POST",
         body: JSON.stringify({
@@ -531,12 +629,31 @@ export default function Home() {
           signed_tx: signed.tx,
         }),
       });
-      event.currentTarget.reset();
+      formElement.reset();
+      writeSupplyState({
+        status: "success",
+        step: "settlement",
+        title: "Supply submitted",
+        message: `${assetAmount(amount, asset)} was broadcast to CKB testnet and attached to your LiquidLane LP receipt.`,
+        amount,
+        asset,
+        txHash: signed.txHash,
+        explorerUrl,
+      });
       setStatus(`Supplied ${assetAmount(amount, asset)} to ${shortAddress(intent.vault_address)} (${shortHash(signed.txHash)}).`);
       await refresh();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Supply failed.";
       showJoyIdPopupStatus(signPopup, "Supply failed", message);
+      writeSupplyState({
+        status: "failed",
+        step: currentStep,
+        title: "Supply did not broadcast",
+        message: "No CKB was moved unless this panel shows a transaction hash.",
+        amount: safeAmount,
+        asset,
+        error: message,
+      });
       setStatus(message);
     } finally {
       setBusy(null);
@@ -801,16 +918,17 @@ export default function Home() {
 
           <section className="product-grid focused-grid" id="vault">
             {showSupply ? (
-              <article>
+              <article className="supply-card">
                 <span className="icon"><CircleDollarSign size={20} /></span>
                 <h2>Supply liquidity</h2>
                 <form className="stack-form" onSubmit={handleDeposit}>
                   <label>Asset<input name="asset" value={vault?.asset ?? DEFAULT_ASSET} readOnly required /></label>
                   <label>Amount<input name="amount" type="number" min="1" step="1" placeholder="100" required /></label>
-                  <button type="submit" disabled={busy === "deposit" || !vaultReady}>{busy === "deposit" ? <Loader2 className="spin" size={16} /> : <Banknote size={16} />} Confirm supply</button>
+                  <button type="submit" disabled={busy === "deposit" || !vaultReady}>{busy === "deposit" ? <Loader2 className="spin" size={16} /> : <Banknote size={16} />} {busy === "deposit" ? "Processing supply" : "Confirm supply"}</button>
                 </form>
                 {vaultReady && vault?.address ? <p className="muted compact-note">Active vault <code>{shortAddress(vault.address)}</code></p> : null}
                 {!vaultReady ? <p className="muted compact-note">Vault setup is pending on Core.</p> : null}
+                <SupplyTransactionPanel state={supplyTx} />
               </article>
             ) : null}
 
@@ -1028,6 +1146,57 @@ function EmptyState({ title, text }: { title: string; text: string }) {
   );
 }
 
+const supplySteps: { id: SupplyStepId; label: string }[] = [
+  { id: "vault", label: "Vault" },
+  { id: "intent", label: "Intent" },
+  { id: "funding", label: "Cells" },
+  { id: "signing", label: "Sign" },
+  { id: "broadcast", label: "Broadcast" },
+  { id: "settlement", label: "Receipt" },
+];
+
+function SupplyTransactionPanel({ state }: { state: SupplyTxState | null }) {
+  if (!state) return null;
+  const activeIndex = supplySteps.findIndex((step) => step.id === state.step);
+
+  return (
+    <div className="supply-transaction" data-status={state.status} role="status" aria-live="polite">
+      <div className="supply-transaction-head">
+        <span className="tx-state-icon" aria-hidden="true">
+          {state.status === "success" ? <CheckCircle2 size={18} /> : state.status === "failed" ? <AlertTriangle size={18} /> : <Loader2 className="spin" size={18} />}
+        </span>
+        <div>
+          <strong>{state.title}</strong>
+          <span>{state.message}</span>
+        </div>
+        <time>{state.updatedAt}</time>
+      </div>
+      <div className="supply-stepper" aria-label="Supply transaction progress">
+        {supplySteps.map((step, index) => {
+          const stateName = state.status === "failed" && index === activeIndex ? "failed" : index < activeIndex || state.status === "success" ? "done" : index === activeIndex ? "active" : "waiting";
+          return <span key={step.id} data-state={stateName}>{step.label}</span>;
+        })}
+      </div>
+      {state.amount && state.asset ? (
+        <div className="supply-context">
+          <span>Amount</span>
+          <strong>{assetAmount(state.amount, state.asset)}</strong>
+        </div>
+      ) : null}
+      {state.error ? <p className="supply-error">{state.error}</p> : null}
+      {state.txHash ? (
+        <div className="tx-receipt-row">
+          <span>Transaction</span>
+          <code>{shortHash(state.txHash)}</code>
+          {state.explorerUrl ? <a href={state.explorerUrl} target="_blank" rel="noreferrer"><ExternalLink size={14} /> Explorer</a> : null}
+        </div>
+      ) : (
+        <p className="muted compact-note">No transaction hash has been broadcast yet.</p>
+      )}
+    </div>
+  );
+}
+
 function money(value: number) {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -1046,6 +1215,10 @@ function assetAmount(value: number, asset: string) {
 function shortHash(hash: string) {
   if (hash.length <= 18) return hash;
   return `${hash.slice(0, 8)}...${hash.slice(-8)}`;
+}
+
+function transactionExplorerUrl(txHash: string) {
+  return `${EXPLORER_BASE.replace(/\/$/, "")}/transaction/${txHash}`;
 }
 
 function shortId(id: string) {

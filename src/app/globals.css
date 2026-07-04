@@ -309,6 +309,113 @@ h3 { font-size: 1.24rem; line-height: 1.1; margin-bottom: 10px; }
 .script-records strong { overflow-wrap: anywhere; }
 .script-records code { width: fit-content; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 
+.supply-card {
+  display: grid;
+  gap: 0;
+  overflow: hidden;
+  position: relative;
+}
+.supply-card::before {
+  background: linear-gradient(90deg, var(--accent), var(--gold));
+  content: "";
+  height: 4px;
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: 0;
+}
+.supply-card .icon { margin-top: 4px; }
+.supply-card .stack-form {
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+}
+.supply-card .stack-form button { width: 100%; }
+.supply-transaction {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+  padding-top: 16px;
+}
+.supply-transaction-head {
+  align-items: start;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+}
+.supply-transaction-head > div { display: grid; gap: 4px; min-width: 0; }
+.supply-transaction-head strong { font-size: 1rem; }
+.supply-transaction-head span:not(.tx-state-icon) { color: var(--muted); line-height: 1.45; }
+.supply-transaction-head time { color: var(--muted); font-size: 0.78rem; padding-top: 3px; white-space: nowrap; }
+.tx-state-icon {
+  align-items: center;
+  background: rgba(8, 132, 124, 0.12);
+  border: 1px solid rgba(8, 132, 124, 0.2);
+  border-radius: 8px;
+  color: var(--accent-strong);
+  display: inline-flex;
+  height: 36px;
+  justify-content: center;
+  width: 36px;
+}
+.supply-transaction[data-status="success"] .tx-state-icon { background: rgba(24, 135, 90, 0.13); border-color: rgba(24, 135, 90, 0.25); color: var(--green); }
+.supply-transaction[data-status="failed"] .tx-state-icon { background: rgba(184, 71, 71, 0.12); border-color: rgba(184, 71, 71, 0.24); color: var(--red); }
+.supply-stepper { display: grid; gap: 6px; grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.supply-stepper span {
+  align-items: center;
+  background: #edf2ee;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  display: inline-flex;
+  font-size: 0.72rem;
+  font-weight: 800;
+  justify-content: center;
+  min-height: 30px;
+  overflow: hidden;
+  padding: 0 8px;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.supply-stepper span[data-state="active"] { background: rgba(8, 132, 124, 0.12); border-color: rgba(8, 132, 124, 0.28); color: var(--accent-strong); }
+.supply-stepper span[data-state="done"] { background: rgba(24, 135, 90, 0.12); border-color: rgba(24, 135, 90, 0.24); color: var(--green); }
+.supply-stepper span[data-state="failed"] { background: rgba(184, 71, 71, 0.12); border-color: rgba(184, 71, 71, 0.26); color: var(--red); }
+.supply-context, .tx-receipt-row {
+  align-items: center;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  padding: 12px;
+}
+.supply-context { grid-template-columns: auto minmax(0, 1fr); }
+.supply-context span, .tx-receipt-row span { color: var(--muted); }
+.supply-context strong { justify-self: end; }
+.tx-receipt-row code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tx-receipt-row a {
+  align-items: center;
+  color: var(--accent-strong);
+  display: inline-flex;
+  gap: 6px;
+  justify-content: flex-end;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.supply-error {
+  background: rgba(184, 71, 71, 0.1);
+  border: 1px solid rgba(184, 71, 71, 0.2);
+  border-radius: 8px;
+  color: var(--red);
+  line-height: 1.45;
+  margin: 0;
+  padding: 11px 12px;
+}
+
 .disabled-card { opacity: 0.78; }
 .stack-form { display: grid; gap: 12px; margin-top: 16px; }
 .compact-note { font-size: 0.9rem; line-height: 1.45; margin: 12px 0 0; }
@@ -392,5 +499,10 @@ code { background: #eef2ee; border-radius: 6px; font-size: 0.78rem; padding: 6px
   .position-footer, .state-row { align-items: flex-start; flex-direction: column; }
   .request-card div:last-child { justify-items: start; }
   .form-row, .metric-grid { grid-template-columns: 1fr; }
+  .supply-transaction-head { grid-template-columns: 32px 1fr; }
+  .supply-transaction-head time { grid-column: 2; padding-top: 0; }
+  .supply-stepper { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .tx-receipt-row { align-items: start; grid-template-columns: 1fr; }
+  .supply-context strong { justify-self: start; }
   h1 { font-size: clamp(2.35rem, 3.25rem, 4rem); }
 }

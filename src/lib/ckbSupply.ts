@@ -106,12 +106,15 @@ export type SupplyVaultOptions = {
   intent: SupplyIntent;
   asset: string;
   amount: number;
+  onProgress?: (step: SupplyProgressStep, message: string) => void;
 };
 
 export type SupplyVaultResult = {
   tx: CKBTransaction;
   txHash: string;
 };
+
+export type SupplyProgressStep = "vault" | "funding" | "signing" | "broadcast";
 
 export async function supplyVaultLiquidity(
   wallet: ConnectedCkbWallet,
@@ -127,12 +130,12 @@ export async function supplyVaultLiquidity(
   }
   const scripts = requiredScripts(options.vault.scripts);
   const userLock = toJoyScript(addressToScript(wallet.ckbAddress));
-  showJoyIdPopupStatus(popup, "Preparing CKB transaction", "Checking the active LiquidLane vault cell on testnet.");
+  reportProgress(options, popup, "vault", "Checking the active LiquidLane vault cell on testnet.");
   const vaultCell = await loadVaultCell(options.vault, scripts);
   const receiptType = buildReceiptType(userLock, vaultCell.type, scripts, options.intent);
   const receiptCapacity = occupiedCapacity(userLock, receiptType, RECEIPT_DATA_LEN) + CELL_CAPACITY_PAD;
   const changeCapacity = occupiedCapacity(userLock, null, 0) + CELL_CAPACITY_PAD;
-  showJoyIdPopupStatus(popup, "Preparing CKB transaction", "Collecting clean wallet cells for this supply transaction.");
+  reportProgress(options, popup, "funding", "Collecting clean wallet cells for this supply transaction.");
   const funding = selectFunding(await collectFundingCells(userLock), amount.shannons + receiptCapacity + FEE_MARGIN + changeCapacity);
   const tx = buildSupplyTransaction({
     amount,
@@ -145,9 +148,11 @@ export async function supplyVaultLiquidity(
   });
 
   const witnessIndexes = funding.inputs.map((_, index) => index);
-  showJoyIdPopupStatus(popup, "Opening JoyID", "Review the vault supply transaction and confirm.");
+  reportProgress(options, popup, "signing", "Review the vault supply transaction in JoyID and confirm.");
   const signedTx = await signRawCkbTransaction(wallet, tx, witnessIndexes, popup);
   assertSignedRawTransactionMatches(tx, signedTx);
+  assertJoyIdSignedWitness(tx, signedTx, witnessIndexes);
+  reportProgress(options, popup, "broadcast", "Broadcasting the signed vault transaction to CKB testnet.");
   const txHash = await broadcastCkbTransaction(signedTx);
   return { tx: { ...signedTx, hash: txHash } as CKBTransaction, txHash };
 }
@@ -404,6 +409,22 @@ function assertSignedRawTransactionMatches(unsignedTx: CKBTransaction, signedTx:
   if (raw(unsignedTx) !== raw(signedTx)) {
     throw new Error("JoyID returned a signed transaction with changed raw fields. LiquidLane will not broadcast it.");
   }
+}
+
+function assertJoyIdSignedWitness(unsignedTx: CKBTransaction, signedTx: CKBTransaction, witnessIndexes: number[]) {
+  if (!Array.isArray(signedTx.witnesses) || signedTx.witnesses.length === 0) {
+    throw new Error("JoyID returned no signed witnesses. No vault supply transaction was broadcast.");
+  }
+  const signed = witnessIndexes.some((index) => (signedTx.witnesses[index] ?? "0x") !== (unsignedTx.witnesses[index] ?? "0x"));
+  if (!signed) {
+    throw new Error("JoyID returned without a CKB signature. No vault supply transaction was broadcast.");
+  }
+}
+
+function reportProgress(options: SupplyVaultOptions, popup: JoyIdPopup | undefined, step: SupplyProgressStep, message: string) {
+  const title = step === "signing" ? "Opening JoyID" : "Preparing CKB transaction";
+  options.onProgress?.(step, message);
+  showJoyIdPopupStatus(popup, title, message);
 }
 
 function requireHash(value: string | null | undefined, label: string) {
