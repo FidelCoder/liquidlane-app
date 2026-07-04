@@ -1,5 +1,6 @@
 import {
   connect,
+  getCotaCellDep,
   getJoyIDLockScript,
   getSubkeyUnlock,
   initConfig,
@@ -172,6 +173,7 @@ export async function signRawCkbTransaction(
   if (!signedTx || !Array.isArray(signedTx.witnesses)) {
     throw new Error("JoyID did not return a signed CKB transaction.");
   }
+  assertSignedRawTransactionMatches(txToSign, signedTx);
   assertSignedJoyIdWitness(signedTx, witnessIndexes[0] ?? 0);
   return signedTx;
 }
@@ -196,6 +198,7 @@ async function prepareJoyIdRawTransaction(
 
   showJoyIdPopupStatus(popup, "Preparing JoyID unlock", "Fetching the JoyID sub-key unlock proof for this CKB transaction.");
   const unlockEntry = await getSubkeyUnlock(joyidAggregatorURL, wallet.joyIdConnection);
+  appendCellDep(preparedTx, getCotaCellDep(ckbNetwork === "mainnet"));
   const witnessArgs = deserializeWitnessArgsHex(preparedTx.witnesses[firstWitnessIndex]);
   preparedTx.witnesses[firstWitnessIndex] = serializeWitnessArgs({
     lock: witnessArgs.lock,
@@ -204,6 +207,42 @@ async function prepareJoyIdRawTransaction(
   });
 
   return preparedTx;
+}
+
+function assertSignedRawTransactionMatches(unsignedTx: CKBTransaction, signedTx: CKBTransaction) {
+  if (rawTransactionFingerprint(unsignedTx) !== rawTransactionFingerprint(signedTx)) {
+    throw new Error("JoyID returned a signed transaction with changed raw fields. LiquidLane will not broadcast it.");
+  }
+}
+
+function rawTransactionFingerprint(tx: CKBTransaction) {
+  return JSON.stringify({
+    cellDeps: tx.cellDeps.map((dep) => ({
+      outPoint: { txHash: dep.outPoint.txHash, index: dep.outPoint.index },
+      depType: dep.depType,
+    })),
+    headerDeps: tx.headerDeps,
+    inputs: tx.inputs.map((input) => ({
+      previousOutput: { txHash: input.previousOutput.txHash, index: input.previousOutput.index },
+      since: input.since,
+    })),
+    outputs: tx.outputs.map((output) => ({
+      capacity: output.capacity,
+      lock: output.lock,
+      type: output.type ?? null,
+    })),
+    outputsData: tx.outputsData,
+    version: tx.version,
+  });
+}
+
+function appendCellDep(tx: CKBTransaction, dep: CKBTransaction["cellDeps"][number]) {
+  const exists = tx.cellDeps.some((cellDep) =>
+    cellDep.outPoint.txHash === dep.outPoint.txHash &&
+    cellDep.outPoint.index === dep.outPoint.index &&
+    cellDep.depType === dep.depType,
+  );
+  if (!exists) tx.cellDeps.push(dep);
 }
 
 function assertSignedJoyIdWitness(tx: CKBTransaction, witnessIndex: number) {

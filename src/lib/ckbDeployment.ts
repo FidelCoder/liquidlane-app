@@ -172,7 +172,6 @@ export async function deployCkbScripts(
 
       options.onProgress?.("signing", detail);
       const signedTx = await signRawCkbTransaction(wallet, tx, joyIdWitnessIndexes, signingPopups[planIndex]);
-      assertSignedRawTransactionMatches(tx, signedTx);
       options.onProgress?.("broadcast", detail);
       const txHash = await broadcastCkbTransaction(signedTx);
       const explorerUrl = transactionExplorerUrl(txHash);
@@ -471,47 +470,6 @@ async function assertLiveCellDep(dep: CellDep) {
   ]);
   if (result.status !== "live") {
     throw new Error(`JoyID CKB cell dep ${dep.outPoint.txHash}#${dep.outPoint.index} is ${result.status}. Update NEXT_PUBLIC_JOYID_CELL_DEP_TX_HASH and restart the frontend.`);
-  }
-}
-
-function assertSignedRawTransactionMatches(unsignedTx: CKBTransaction, signedTx: CKBTransaction) {
-  const rawFields = (tx: CKBTransaction) => JSON.stringify({
-    cellDeps: tx.cellDeps.map((dep) => ({
-      outPoint: {
-        txHash: dep.outPoint.txHash,
-        index: dep.outPoint.index,
-      },
-      depType: dep.depType,
-    })),
-    headerDeps: tx.headerDeps,
-    inputs: tx.inputs.map((input) => ({
-      previousOutput: {
-        txHash: input.previousOutput.txHash,
-        index: input.previousOutput.index,
-      },
-      since: input.since,
-    })),
-    outputs: tx.outputs.map((output) => ({
-      capacity: output.capacity,
-      lock: {
-        codeHash: output.lock.codeHash,
-        hashType: output.lock.hashType,
-        args: output.lock.args,
-      },
-      type: output.type
-        ? {
-            codeHash: output.type.codeHash,
-            hashType: output.type.hashType,
-            args: output.type.args,
-          }
-        : null,
-    })),
-    outputsData: tx.outputsData,
-    version: tx.version,
-  });
-
-  if (rawFields(unsignedTx) !== rawFields(signedTx)) {
-    throw new Error("JoyID returned a signed transaction with changed raw fields. LiquidLane will not broadcast it because the signature would be invalid.");
   }
 }
 

@@ -150,7 +150,6 @@ export async function supplyVaultLiquidity(
   const witnessIndexes = funding.inputs.map((_, index) => index);
   reportProgress(options, popup, "signing", "Review the vault supply transaction in JoyID and confirm.");
   const signedTx = await signRawCkbTransaction(wallet, tx, witnessIndexes, popup);
-  assertSignedRawTransactionMatches(tx, signedTx);
   assertJoyIdSignedWitness(tx, signedTx, witnessIndexes);
   reportProgress(options, popup, "broadcast", "Broadcasting the signed vault transaction to CKB testnet.");
   const txHash = await broadcastCkbTransaction(signedTx);
@@ -395,20 +394,6 @@ function toRpcScript(script: JoyScript): RpcScript {
 
 function emptyWitness() {
   return serializeWitnessArgs({ lock: "0x", inputType: "0x", outputType: "0x" });
-}
-
-function assertSignedRawTransactionMatches(unsignedTx: CKBTransaction, signedTx: CKBTransaction) {
-  const raw = (tx: CKBTransaction) => JSON.stringify({
-    cellDeps: tx.cellDeps,
-    headerDeps: tx.headerDeps,
-    inputs: tx.inputs,
-    outputs: tx.outputs,
-    outputsData: tx.outputsData,
-    version: tx.version,
-  });
-  if (raw(unsignedTx) !== raw(signedTx)) {
-    throw new Error("JoyID returned a signed transaction with changed raw fields. LiquidLane will not broadcast it.");
-  }
 }
 
 function assertJoyIdSignedWitness(unsignedTx: CKBTransaction, signedTx: CKBTransaction, witnessIndexes: number[]) {
