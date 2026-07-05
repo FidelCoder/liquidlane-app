@@ -186,6 +186,7 @@ async function prepareJoyIdRawTransaction(
   const preparedTx = cloneTransaction(tx);
   const firstWitnessIndex = witnessIndexes[0] ?? 0;
   preparedTx.witnesses[firstWitnessIndex] ??= serializeWitnessArgs({ lock: "0x", inputType: "0x", outputType: "0x" });
+  await attachJoyIdOutputMetadata(preparedTx, wallet, firstWitnessIndex);
 
   if (!wallet.joyIdConnection.keyType?.startsWith("sub")) {
     return preparedTx;
@@ -202,6 +203,120 @@ async function prepareJoyIdRawTransaction(
   });
 
   return preparedTx;
+}
+
+async function attachJoyIdOutputMetadata(tx: CKBTransaction, wallet: ConnectedCkbWallet, firstWitnessIndex: number) {
+  const joyIdOutputs = tx.outputs
+    .map((output, index) => ({ output, index }))
+    .filter(({ output }) => sameScript(output.lock, toJoyScript(wallet.lockScript)));
+  if (!joyIdOutputs.length) return;
+
+  const credential = await fetchJoyIdCredential(wallet);
+  const metadataWitnesses = joyIdOutputs.map(({ index }) => joyIdMetadataHex(credential, index));
+  const firstWitness = deserializeWitnessArgsHex(tx.witnesses[firstWitnessIndex]);
+  tx.witnesses[firstWitnessIndex] = serializeWitnessArgs({
+    lock: firstWitness.lock,
+    inputType: firstWitness.inputType,
+    outputType: metadataWitnesses[0],
+  });
+
+  for (const metadata of metadataWitnesses.slice(1)) {
+    tx.witnesses.push(serializeWitnessArgs({ lock: "0x", inputType: "0x", outputType: metadata }));
+  }
+}
+
+type JoyIdCredential = {
+  id: string;
+  name?: string;
+  user_name?: string;
+  public_key: string;
+  alg: number;
+  key_type: string;
+  ckb_address: string;
+  cota_cell_id?: string;
+};
+
+async function fetchJoyIdCredential(wallet: ConnectedCkbWallet): Promise<JoyIdCredential> {
+  const response = await fetch(joyidServerURL.replace(/\/$/, "") + "/credentials/" + wallet.ckbAddress);
+  if (!response.ok) {
+    throw new Error("JoyID credential lookup failed with HTTP " + response.status + ".");
+  }
+  const body = (await response.json()) as { credentials?: JoyIdCredential[] };
+  const credentials = body.credentials ?? [];
+  const walletPubkey = normalizeCredentialPubkey(wallet.joyIdConnection.pubkey);
+  const keyType = wallet.joyIdConnection.keyType;
+  const credential = credentials.find((item) =>
+    item.ckb_address === wallet.ckbAddress &&
+    item.key_type === keyType &&
+    normalizeCredentialPubkey(item.public_key) === walletPubkey,
+  ) ?? credentials.find((item) => item.ckb_address === wallet.ckbAddress && item.key_type === keyType);
+
+  if (!credential) {
+    throw new Error("JoyID credential metadata was not found for this wallet. Reconnect JoyID and retry supply.");
+  }
+  return credential;
+}
+
+function joyIdMetadataHex(credential: JoyIdCredential, outputIndex: number) {
+  const metadata = {
+    id: "CTMeta",
+    ver: "1.0",
+    metadata: {
+      target: "output#" + outputIndex,
+      type: "joy_id",
+      data: {
+        alg: joyIdAlgHex(credential.alg),
+        cotaCellId: credential.cota_cell_id ?? "0x0000000000000000",
+        credentialId: credentialIdHex(credential.id),
+        front_end: joyIdFrontendHost(),
+        name: credential.user_name ?? credential.name ?? "JoyID",
+        pub_key: "0x" + normalizeCredentialPubkey(credential.public_key),
+        version: "0",
+      },
+    },
+  };
+  return stringToHex(JSON.stringify(metadata));
+}
+
+function joyIdAlgHex(alg: number) {
+  if (alg === -7) return "0x01";
+  if (alg === -257) return "0x02";
+  return "0x" + Math.max(0, alg).toString(16).padStart(2, "0");
+}
+
+function credentialIdHex(id: string) {
+  if (/^0x[0-9a-fA-F]+$/.test(id)) return id;
+  const normalized = id.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+  const binary = atob(padded);
+  return "0x" + Array.from(binary, (char) => char.charCodeAt(0).toString(16).padStart(2, "0")).join("");
+}
+
+function normalizeCredentialPubkey(value: string) {
+  const clean = value.replace(/^0x/, "").toLowerCase();
+  return clean.length === 130 && clean.startsWith("04") ? clean.slice(2) : clean;
+}
+
+function joyIdFrontendHost() {
+  try {
+    return new URL(joyidAppURL).hostname;
+  } catch {
+    return ckbNetwork === "mainnet" ? "app.joy.id" : "testnet.joyid.dev";
+  }
+}
+
+function stringToHex(value: string) {
+  return "0x" + Array.from(new TextEncoder().encode(value), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function sameScript(left: { codeHash: string; hashType: string; args: string }, right: { codeHash: string; hashType: string; args: string }) {
+  return left.codeHash.toLowerCase() === right.codeHash.toLowerCase() &&
+    left.hashType === right.hashType &&
+    left.args.toLowerCase() === right.args.toLowerCase();
+}
+
+function toJoyScript(script: CkbLockScript) {
+  return { codeHash: script.code_hash, hashType: script.hash_type, args: script.args };
 }
 
 function assertSignedSpendMatches(unsignedTx: CKBTransaction, signedTx: CKBTransaction) {
@@ -387,18 +502,6 @@ function toRpcScript(script: { codeHash: string; hashType: string; args: string 
   };
 }
 
-function buildJoyIdSignedTx(
-  unsignedTx: CKBTransaction,
-  signedData: SignChallengeResponseData,
-  witnessIndexes: number[],
-): CKBTransaction {
-  const firstWitnessIndex = witnessIndexes[0] ?? 0;
-  const mode = signedData.keyType.startsWith("sub") ? "02" : "01";
-  const lock = `0x${mode}${signedData.pubkey}${signedData.signature}${signedData.message}`;
-  unsignedTx.witnesses[firstWitnessIndex] = serializeWitnessArgs({ lock, inputType: "0x", outputType: "0x" });
-  return unsignedTx;
-}
-
 function cloneTransaction(tx: CKBTransaction): CKBTransaction {
   return {
     ...tx,
@@ -419,18 +522,6 @@ function cloneTransaction(tx: CKBTransaction): CKBTransaction {
     outputsData: [...tx.outputsData],
     witnesses: [...tx.witnesses],
   };
-}
-
-function hexToBytes(hex: string) {
-  const clean = hex.startsWith("0x") ? hex.slice(2) : hex;
-  if (clean.length % 2 !== 0) {
-    throw new Error("JoyID raw transaction challenge must be even-length hex.");
-  }
-  const bytes = new Uint8Array(clean.length / 2);
-  for (let index = 0; index < clean.length; index += 2) {
-    bytes[index / 2] = Number.parseInt(clean.slice(index, index + 2), 16);
-  }
-  return bytes;
 }
 
 function popupStatusHtml(title: string, detail: string) {
