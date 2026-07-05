@@ -7,6 +7,7 @@ import {
   ckbRpcURL,
   showJoyIdPopupStatus,
   signRawCkbTransaction,
+  signSupplyTransaction,
   type ConnectedCkbWallet,
   type JoyIdPopup,
 } from "@/lib/ckbWallet";
@@ -125,38 +126,28 @@ export async function supplyVaultLiquidity(
   if (options.asset.trim().toUpperCase() !== "CKB") {
     throw new Error("The live vault supply path is currently enabled for CKB.");
   }
-  const amount = ckbAmount(options.amount);
+  ckbAmount(options.amount);
   if (options.vault.address !== options.intent.vault_address) {
     throw new Error("Supply intent does not match the active vault address.");
   }
-  const scripts = requiredScripts(options.vault.scripts);
-  const userLock = toJoyScript(addressToScript(wallet.ckbAddress));
-  reportProgress(options, popup, "vault", "Checking the active LiquidLane vault cell on testnet.");
-  const vaultCell = await loadVaultCell(options.vault, scripts);
-  const receiptType = buildReceiptType(userLock, vaultCell.type, scripts, options.intent);
-  const receiptCapacity = occupiedCapacity(userLock, receiptType, RECEIPT_DATA_LEN) + CELL_CAPACITY_PAD;
-  const changeCapacity = occupiedCapacity(userLock, null, 0) + CELL_CAPACITY_PAD;
-  reportProgress(options, popup, "funding", "Selecting one clean JoyID wallet cell for this supply transaction.");
-  const funding = selectFunding(await collectFundingCells(userLock), amount.shannons + receiptCapacity + FEE_MARGIN + changeCapacity);
-  const tx = buildSupplyTransaction({
-    amount,
-    funding,
-    userLock,
-    vaultCell,
-    receiptType,
-    receiptCapacity,
-    scripts,
-  });
+  if (!options.vault.address?.trim()) {
+    throw new Error("LiquidLane vault address is not configured.");
+  }
 
-  const witnessIndexes = funding.inputs.map((_, index) => index);
-  reportProgress(options, popup, "signing", "Review the vault supply transaction in JoyID and confirm.");
-  const signedTx = await signRawCkbTransaction(wallet, tx, witnessIndexes, popup);
-  assertJoyIdSignedWitness(tx, signedTx, witnessIndexes);
-  reportProgress(options, popup, "verify", "Dry-running the signed transaction on CKB testnet before broadcast.");
-  await dryRunCkbTransaction(signedTx);
-  reportProgress(options, popup, "broadcast", "Dry-run passed. Broadcasting the signed vault transaction to CKB testnet.");
-  const txHash = await broadcastCkbTransaction(signedTx);
-  return { tx: { ...signedTx, hash: txHash } as CKBTransaction, txHash };
+  reportProgress(options, popup, "vault", "Checking the active LiquidLane vault address on testnet.");
+  reportProgress(options, popup, "funding", "Preparing a JoyID-native CKB transfer into the active vault.");
+  reportProgress(options, popup, "signing", "Review the vault supply transfer in JoyID and confirm.");
+  const signed = await signSupplyTransaction(wallet, {
+    asset: options.asset,
+    amount: options.amount,
+    to: options.vault.address,
+    memo: `LiquidLane supply intent ${options.intent.id}`,
+  }, popup);
+  if (!signed.txHash) {
+    throw new Error("JoyID supply transfer did not return a transaction hash.");
+  }
+  reportProgress(options, popup, "broadcast", "JoyID transfer broadcast to CKB testnet.");
+  return { tx: signed.tx, txHash: signed.txHash };
 }
 
 function buildSupplyTransaction(input: {

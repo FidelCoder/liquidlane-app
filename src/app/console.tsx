@@ -230,7 +230,7 @@ function LiquidityProvisionView({ dashboard, utilization, vaultReady, busy, supp
           <CircleDollarSign size={22} />
           <div>
             <h2>Supply Liquidity</h2>
-            <p>Fund the active CKB vault and mint an LP receipt cell.</p>
+            <p>Fund the active CKB vault and record an LP receipt.</p>
           </div>
         </div>
         <form className="stack-form console-form" onSubmit={onDeposit}>
