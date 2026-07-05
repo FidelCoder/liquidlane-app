@@ -232,7 +232,7 @@ type Service = {
 };
 
 export type SupplyStepId = "vault" | "intent" | "funding" | "signing" | "broadcast" | "settlement";
-export type SupplyTxStatus = "running" | "success" | "failed";
+export type SupplyTxStatus = "running" | "ready" | "success" | "failed";
 
 export type SupplyTxState = {
   status: SupplyTxStatus;
@@ -556,7 +556,7 @@ export default function Home() {
         setCkbAddress(activeWallet.ckbAddress);
         window.localStorage.setItem(ADDRESS_KEY, activeWallet.ckbAddress);
         writeSupplyState({
-          status: "running",
+          status: "ready",
           step: "signing",
           title: "Signer reconnected",
           message: "Click Confirm supply again to sign the vault transaction.",
@@ -1206,7 +1206,7 @@ function SupplyTransactionPanel({ state }: { state: SupplyTxState | null }) {
     <div className="supply-transaction" data-status={state.status} role="status" aria-live="polite">
       <div className="supply-transaction-head">
         <span className="tx-state-icon" aria-hidden="true">
-          {state.status === "success" ? <CheckCircle2 size={18} /> : state.status === "failed" ? <AlertTriangle size={18} /> : <Loader2 className="spin" size={18} />}
+          {state.status === "success" || state.status === "ready" ? <CheckCircle2 size={18} /> : state.status === "failed" ? <AlertTriangle size={18} /> : <Loader2 className="spin" size={18} />}
         </span>
         <div>
           <strong>{state.title}</strong>
@@ -1216,7 +1216,7 @@ function SupplyTransactionPanel({ state }: { state: SupplyTxState | null }) {
       </div>
       <div className="supply-stepper" aria-label="Supply transaction progress">
         {supplySteps.map((step, index) => {
-          const stateName = state.status === "failed" && index === activeIndex ? "failed" : index < activeIndex || state.status === "success" ? "done" : index === activeIndex ? "active" : "waiting";
+          const stateName = state.status === "failed" && index === activeIndex ? "failed" : index < activeIndex || state.status === "success" || (state.status === "ready" && index === activeIndex) ? "done" : index === activeIndex ? "active" : "waiting";
           return <span key={step.id} data-state={stateName}>{step.label}</span>;
         })}
       </div>
