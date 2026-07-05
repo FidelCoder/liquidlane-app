@@ -52,7 +52,7 @@ export const ckbNetwork = (process.env.NEXT_PUBLIC_CKB_NETWORK === "mainnet" ? "
 
 const joyidAppURL = process.env.NEXT_PUBLIC_JOYID_APP_URL ?? (ckbNetwork === "mainnet" ? "https://app.joy.id" : "https://testnet.joyid.dev");
 const joyidServerURL = process.env.NEXT_PUBLIC_JOYID_SERVER_URL ?? (ckbNetwork === "mainnet" ? "https://api.joy.id/api/v1" : "https://api.testnet.joyid.dev/api/v1");
-const joyidAggregatorURL = process.env.NEXT_PUBLIC_JOYID_AGGREGATOR_URL ?? (ckbNetwork === "mainnet" ? "https://cota.nervina.dev/aggregator" : "https://cota-testnet.nervina.dev/aggregator");
+const joyidAggregatorURL = process.env.NEXT_PUBLIC_JOYID_AGGREGATOR_URL ?? (ckbNetwork === "mainnet" ? "https://cota.nervina.dev/mainnet-aggregator" : "https://cota.nervina.dev/aggregator");
 export const ckbRpcURL = normalizeCkbRpcURL(process.env.NEXT_PUBLIC_CKB_RPC_URL);
 
 export async function connectCkbWallet(popup?: JoyIdPopup): Promise<ConnectedCkbWallet> {
@@ -192,13 +192,9 @@ async function prepareJoyIdRawTransaction(
     return preparedTx;
   }
 
-  if (!wallet.joyIdConnection.pubkey) {
-    throw new Error("JoyID sub-key connection is missing the public key needed for CKB unlock proof.");
-  }
-
-  showJoyIdPopupStatus(popup, "Preparing JoyID unlock", "Fetching the JoyID sub-key unlock proof for this CKB transaction.");
+  showJoyIdPopupStatus(popup, "Preparing JoyID unlock", "Fetching JoyID sub-key proof before signing this CKB transaction.");
   const unlockEntry = await getSubkeyUnlock(joyidAggregatorURL, wallet.joyIdConnection);
-  appendCellDep(preparedTx, getCotaCellDep(ckbNetwork === "mainnet"));
+  prependCellDep(preparedTx, getCotaCellDep(ckbNetwork === "mainnet"));
   const witnessArgs = deserializeWitnessArgsHex(preparedTx.witnesses[firstWitnessIndex]);
   preparedTx.witnesses[firstWitnessIndex] = serializeWitnessArgs({
     lock: witnessArgs.lock,
@@ -236,13 +232,13 @@ function rawTransactionFingerprint(tx: CKBTransaction) {
   });
 }
 
-function appendCellDep(tx: CKBTransaction, dep: CKBTransaction["cellDeps"][number]) {
+function prependCellDep(tx: CKBTransaction, dep: CKBTransaction["cellDeps"][number]) {
   const exists = tx.cellDeps.some((cellDep) =>
     cellDep.outPoint.txHash === dep.outPoint.txHash &&
     cellDep.outPoint.index === dep.outPoint.index &&
     cellDep.depType === dep.depType,
   );
-  if (!exists) tx.cellDeps.push(dep);
+  if (!exists) tx.cellDeps.unshift(dep);
 }
 
 function assertSignedJoyIdWitness(tx: CKBTransaction, witnessIndex: number) {
