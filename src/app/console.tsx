@@ -542,6 +542,7 @@ const supplySteps: { id: SupplyStepId; label: string }[] = [
   { id: "intent", label: "Intent" },
   { id: "funding", label: "Cells" },
   { id: "signing", label: "Sign" },
+  { id: "verify", label: "Verify" },
   { id: "broadcast", label: "Broadcast" },
   { id: "settlement", label: "Receipt" },
 ];
