@@ -22,6 +22,7 @@ import {
   UserRound,
   Waves,
 } from "lucide-react";
+import { ConsoleApp, type ConsoleView } from "./console";
 import { deployCkbScripts, type DeploymentProgressDetail, type DeploymentResult } from "@/lib/ckbDeployment";
 import { supplyVaultLiquidity, type SupplyProgressStep } from "@/lib/ckbSupply";
 import {
@@ -32,10 +33,10 @@ import {
   type JoyIdPopup,
 } from "@/lib/ckbWallet";
 
-type Role = "lp" | "merchant" | "operator";
-type LiquidityStatus = "requested" | "pending_fiber_channel" | "channel_open" | "failed";
+export type Role = "lp" | "merchant" | "operator";
+export type LiquidityStatus = "requested" | "pending_fiber_channel" | "channel_open" | "failed";
 
-type UserProfile = {
+export type UserProfile = {
   id: string;
   display_name: string;
   ckb_address: string;
@@ -43,12 +44,12 @@ type UserProfile = {
   role: Role;
 };
 
-type AuthResponse = {
+export type AuthResponse = {
   token: string;
   user: UserProfile;
 };
 
-type VaultScripts = {
+export type VaultScripts = {
   vault_lock_code_hash: string | null;
   vault_lock_out_point: string | null;
   vault_type_code_hash: string | null;
@@ -61,7 +62,7 @@ type VaultScripts = {
   fee_claim_type_out_point: string | null;
 };
 
-type VaultConfig = {
+export type VaultConfig = {
   asset: string;
   address: string | null;
   cell_out_point?: string | null;
@@ -70,7 +71,7 @@ type VaultConfig = {
   scripts?: VaultScripts;
 };
 
-type VaultSummary = VaultConfig & {
+export type VaultSummary = VaultConfig & {
   total_deposits: number;
   reserved_liquidity: number;
   pending_channel_liquidity: number;
@@ -81,7 +82,7 @@ type VaultSummary = VaultConfig & {
   active_requests: number;
 };
 
-type Deposit = {
+export type Deposit = {
   id: string;
   lp_name: string;
   ckb_address: string;
@@ -91,11 +92,11 @@ type Deposit = {
   created_at: string;
 };
 
-type IntentStatus = "pending_signature" | "settled" | "expired" | "cancelled";
-type PositionStatus = "active" | "closed";
-type ReservationStatus = "reserved" | "deployed" | "released" | "failed";
+export type IntentStatus = "pending_signature" | "settled" | "expired" | "cancelled";
+export type PositionStatus = "active" | "closed";
+export type ReservationStatus = "reserved" | "deployed" | "released" | "failed";
 
-type SupplyIntent = {
+export type SupplyIntent = {
   id: string;
   lp_id: string;
   lp_name: string;
@@ -111,7 +112,7 @@ type SupplyIntent = {
   expires_at: string;
 };
 
-type LpPosition = {
+export type LpPosition = {
   id: string;
   lp_id: string;
   lp_name: string;
@@ -130,7 +131,7 @@ type LpPosition = {
   updated_at: string;
 };
 
-type CapacityReservation = {
+export type CapacityReservation = {
   id: string;
   request_id: string;
   merchant_id: string;
@@ -145,7 +146,7 @@ type CapacityReservation = {
   updated_at: string;
 };
 
-type WithdrawalIntent = {
+export type WithdrawalIntent = {
   id: string;
   lp_id: string;
   lp_name: string;
@@ -161,7 +162,7 @@ type WithdrawalIntent = {
   expires_at: string;
 };
 
-type FeeClaim = {
+export type FeeClaim = {
   id: string;
   lp_id: string;
   position_id: string;
@@ -174,7 +175,7 @@ type FeeClaim = {
   expires_at: string;
 };
 
-type LiquidityRequest = {
+export type LiquidityRequest = {
   id: string;
   merchant_name: string;
   ckb_address: string;
@@ -192,7 +193,7 @@ type LiquidityRequest = {
   created_at: string;
 };
 
-type LiquidityQuote = {
+export type LiquidityQuote = {
   asset: string;
   amount: number;
   duration_days: number;
@@ -202,7 +203,7 @@ type LiquidityQuote = {
   available_liquidity: number;
 };
 
-type ActivityEvent = {
+export type ActivityEvent = {
   id: string;
   label: string;
   amount: number | null;
@@ -210,7 +211,7 @@ type ActivityEvent = {
   created_at: string;
 };
 
-type Dashboard = {
+export type Dashboard = {
   user: UserProfile;
   vault: VaultSummary;
   deposits: Deposit[];
@@ -230,10 +231,10 @@ type Service = {
   icon: typeof CircleDollarSign;
 };
 
-type SupplyStepId = "vault" | "intent" | "funding" | "signing" | "broadcast" | "settlement";
-type SupplyTxStatus = "running" | "success" | "failed";
+export type SupplyStepId = "vault" | "intent" | "funding" | "signing" | "broadcast" | "settlement";
+export type SupplyTxStatus = "running" | "success" | "failed";
 
-type SupplyTxState = {
+export type SupplyTxState = {
   status: SupplyTxStatus;
   step: SupplyStepId;
   title: string;
@@ -289,6 +290,7 @@ export default function Home() {
   const [wallet, setWallet] = useState<ConnectedCkbWallet | null>(null);
   const [ckbAddress, setCkbAddress] = useState<string | null>(null);
   const [selectedRole, setSelectedRole] = useState<Role | null>(null);
+  const [activeView, setActiveView] = useState<ConsoleView>("lp");
   const [displayName, setDisplayName] = useState("");
   const [status, setStatus] = useState("Connect a CKB wallet to choose a LiquidLane service.");
   const [copiedWalletAddress, setCopiedWalletAddress] = useState(false);
@@ -352,6 +354,7 @@ export default function Home() {
         setActiveVault(data.vault);
         setToken(activeToken);
         setSelectedRole(data.user.role);
+        setActiveView(data.user.role);
         setCkbAddress(data.user.ckb_address);
         window.localStorage.setItem(TOKEN_KEY, activeToken);
         window.localStorage.setItem(ADDRESS_KEY, data.user.ckb_address);
@@ -407,6 +410,7 @@ export default function Home() {
 
   async function enterService(role: Role) {
     setSelectedRole(role);
+    setActiveView(role);
     if (dashboard?.user.role === role) {
       document.getElementById("workspace")?.scrollIntoView({ behavior: "smooth" });
       return;
@@ -469,6 +473,7 @@ export default function Home() {
     setSupplyTx(null);
     setCopiedWalletAddress(false);
     setSelectedRole(null);
+    setActiveView("lp");
     setStatus("Signed out. Connect a CKB wallet to choose a service.");
   }
 
@@ -777,6 +782,44 @@ export default function Home() {
   const showDeploy = dashboard?.user.role === "operator";
   const vaultReady = Boolean(vault?.configured && vault.address);
   const claimableFees = dashboard?.positions.reduce((total, position) => total + Math.max(position.fees_earned - position.fees_claimed, 0), 0) ?? 0;
+
+  if (Boolean(dashboard)) {
+    const activeDashboard = dashboard as Dashboard;
+    return (
+      <ConsoleApp
+        dashboard={activeDashboard}
+        activeView={activeView}
+        ckbAddress={ckbAddress}
+        walletReady={hasActiveWallet}
+        loading={loading}
+        busy={busy}
+        status={status}
+        copiedWalletAddress={copiedWalletAddress}
+        quote={quote}
+        supplyTx={supplyTx}
+        deploymentNotice={deploymentNotice}
+        deployment={deployment}
+        vaultReady={vaultReady}
+        utilization={utilization}
+        claimableFees={claimableFees}
+        onViewChange={(view) => {
+          if (view === "vault") {
+            setActiveView("vault");
+            return;
+          }
+          void enterService(view);
+        }}
+        onConnectWallet={connectWallet}
+        onCopyWalletAddress={copyWalletAddress}
+        onSignOut={signOut}
+        onRefresh={() => refresh()}
+        onDeposit={handleDeposit}
+        onRequest={handleRequest}
+        onOpenFiberChannel={openFiberChannel}
+        onDeployScripts={deployScriptsToTestnet}
+      />
+    );
+  }
 
   return (
     <main className="app-shell">
