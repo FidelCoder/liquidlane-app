@@ -1,4 +1,6 @@
 import {
+  buildSignedTx,
+  calculateChallenge,
   connect,
   getCotaCellDep,
   getJoyIDLockScript,
@@ -6,7 +8,6 @@ import {
   initConfig,
   openPopup,
   signChallenge as joySignChallenge,
-  signRawTransaction as joySignRawTransaction,
   signTransaction,
   type CKBTransaction,
   type ConnectResponseData,
@@ -160,7 +161,8 @@ export async function signRawCkbTransaction(
   showJoyIdPopupStatus(popup, "Opening JoyID", "Review the CKB transaction and confirm the signature.");
 
   const txToSign = await prepareJoyIdRawTransaction(wallet, tx, witnessIndexes, popup);
-  const signedTx = await joySignRawTransaction(txToSign, wallet.ckbAddress, {
+  const challenge = await calculateChallenge(txToSign, witnessIndexes);
+  const signedChallenge = await joySignChallenge(hexToBytes(`0x${challenge}`), wallet.ckbAddress, {
     name: "LiquidLane",
     network: ckbNetwork,
     joyidAppURL,
@@ -168,11 +170,8 @@ export async function signRawCkbTransaction(
     rpcURL: ckbRpcURL,
     popup: popup ?? undefined,
     timeoutInSeconds: 300,
-    witnessIndexes,
   });
-  if (!signedTx || !Array.isArray(signedTx.witnesses)) {
-    throw new Error("JoyID did not return a signed CKB transaction.");
-  }
+  const signedTx = buildSignedTx(txToSign, signedChallenge, witnessIndexes);
   assertSignedRawTransactionMatches(txToSign, signedTx);
   assertSignedJoyIdWitness(signedTx, witnessIndexes[0] ?? 0);
   return signedTx;

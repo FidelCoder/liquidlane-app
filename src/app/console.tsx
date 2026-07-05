@@ -19,18 +19,15 @@ import {
   Link2,
   Loader2,
   LogOut,
-  Plus,
   RadioTower,
   ReceiptText,
   Route,
   Settings,
   Store,
   TerminalSquare,
-  UploadCloud,
   UserRound,
   Wifi,
 } from "lucide-react";
-import type { DeploymentResult } from "@/lib/ckbDeployment";
 import type {
   Dashboard,
   LiquidityQuote,
@@ -56,8 +53,6 @@ export type ConsoleAppProps = {
   copiedWalletAddress: boolean;
   quote: LiquidityQuote | null;
   supplyTx: SupplyTxState | null;
-  deploymentNotice: string | null;
-  deployment: DeploymentResult | null;
   vaultReady: boolean;
   utilization: number;
   claimableFees: number;
@@ -69,7 +64,6 @@ export type ConsoleAppProps = {
   onDeposit: (event: FormEvent<HTMLFormElement>) => void;
   onRequest: (event: FormEvent<HTMLFormElement>) => void;
   onOpenFiberChannel: (id: string) => void;
-  onDeployScripts: () => void;
 };
 
 const consoleItems: { view: ConsoleView; label: string; detail: string; icon: typeof CircleDollarSign }[] = [
@@ -91,8 +85,6 @@ export function ConsoleApp(props: ConsoleAppProps) {
     copiedWalletAddress,
     quote,
     supplyTx,
-    deploymentNotice,
-    deployment,
     vaultReady,
     utilization,
     claimableFees,
@@ -104,7 +96,6 @@ export function ConsoleApp(props: ConsoleAppProps) {
     onDeposit,
     onRequest,
     onOpenFiberChannel,
-    onDeployScripts,
   } = props;
   const vault = dashboard.vault;
   const consoleRole = activeView === "vault" ? dashboard.user.role : activeView;
@@ -167,7 +158,6 @@ export function ConsoleApp(props: ConsoleAppProps) {
             </div>
             <div className="console-hero-actions">
               <button type="button" className="ghost-button" onClick={() => onRefresh()} disabled={loading}>{loading ? <Loader2 className="spin" size={16} /> : <Gauge size={16} />} Sync</button>
-              {dashboard.user.role === "operator" ? <button type="button" className="gold-button" onClick={onDeployScripts} disabled={busy === "deploy-scripts"}>{busy === "deploy-scripts" ? <Loader2 className="spin" size={16} /> : <Plus size={16} />} Deploy Scripts</button> : null}
             </div>
           </section>
 
@@ -176,7 +166,7 @@ export function ConsoleApp(props: ConsoleAppProps) {
           ) : activeView === "merchant" ? (
             <MerchantTerminalView dashboard={dashboard} busy={busy} quote={quote} onRequest={onRequest} onOpenFiberChannel={onOpenFiberChannel} />
           ) : activeView === "operator" ? (
-            <NodeConsoleView dashboard={dashboard} busy={busy} utilization={utilization} deploymentNotice={deploymentNotice} deployment={deployment} onOpenFiberChannel={onOpenFiberChannel} onDeployScripts={onDeployScripts} />
+            <NodeConsoleView dashboard={dashboard} busy={busy} utilization={utilization} onOpenFiberChannel={onOpenFiberChannel} />
           ) : (
             <VaultStatsView dashboard={dashboard} utilization={utilization} claimableFees={claimableFees} />
           )}
@@ -321,14 +311,11 @@ function MerchantTerminalView({ dashboard, busy, quote, onRequest, onOpenFiberCh
   );
 }
 
-function NodeConsoleView({ dashboard, busy, utilization, deploymentNotice, deployment, onOpenFiberChannel, onDeployScripts }: {
+function NodeConsoleView({ dashboard, busy, utilization, onOpenFiberChannel }: {
   dashboard: Dashboard;
   busy: string | null;
   utilization: number;
-  deploymentNotice: string | null;
-  deployment: DeploymentResult | null;
   onOpenFiberChannel: (id: string) => void;
-  onDeployScripts: () => void;
 }) {
   const vault = dashboard.vault;
   const openChannels = dashboard.liquidity_requests.filter((request) => request.status === "channel_open").length;
@@ -373,12 +360,10 @@ function NodeConsoleView({ dashboard, busy, utilization, deploymentNotice, deplo
         <div className="panel-title split-title">
           <div>
             <h2>Open Operations</h2>
-            <p>Deployment and Fiber execution status.</p>
+            <p>Fiber channel execution status.</p>
           </div>
-          <button type="button" className="gold-button small" onClick={onDeployScripts} disabled={busy === "deploy-scripts"}>{busy === "deploy-scripts" ? <Loader2 className="spin" size={14} /> : <UploadCloud size={14} />} Deploy</button>
         </div>
-        {deploymentNotice ? <p className="deployment-notice">{deploymentNotice}</p> : null}
-        {deployment ? <DeploymentRecordMini deployment={deployment} /> : <EmptyState title="No active deployment" text="Script deployment records appear here after an operator broadcasts them." />}
+        <EmptyState title="No active channel operation" text="Channel open operations appear here after capacity is reserved." />
       </section>
     </div>
   );
@@ -599,22 +584,6 @@ function SupplyTransactionPanel({ state }: { state: SupplyTxState | null }) {
       ) : (
         <p className="muted compact-note">No transaction hash has been broadcast yet.</p>
       )}
-    </div>
-  );
-}
-
-function DeploymentRecordMini({ deployment }: { deployment: DeploymentResult }) {
-  return (
-    <div className="deployment-mini">
-      <div>
-        <span>Transactions</span>
-        <strong>{deployment.transactions.length}</strong>
-      </div>
-      <div>
-        <span>Capacity</span>
-        <strong>{deployment.deployedCkb}</strong>
-      </div>
-      <a href={deployment.explorerUrl} target="_blank" rel="noreferrer"><ExternalLink size={14} /> Explorer</a>
     </div>
   );
 }
