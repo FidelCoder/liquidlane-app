@@ -162,7 +162,7 @@ export async function signRawCkbTransaction(
 
   const txToSign = await prepareJoyIdRawTransaction(wallet, tx, witnessIndexes, popup);
   const challenge = await calculateChallenge(txToSign, witnessIndexes);
-  const signedChallenge = await joySignChallenge(hexToBytes(`0x${challenge}`), wallet.ckbAddress, {
+  const signedChallenge = await joySignChallenge(challenge, wallet.ckbAddress, {
     name: "LiquidLane",
     network: ckbNetwork,
     joyidAppURL,
