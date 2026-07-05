@@ -124,6 +124,7 @@ export async function signSupplyTransaction(
       timeoutInSeconds: 120,
     },
   );
+  await dryRunCkbTransaction(tx);
   const txHash = await broadcastCkbTransaction(tx);
 
   return {
