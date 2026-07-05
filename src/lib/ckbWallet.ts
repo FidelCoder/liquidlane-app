@@ -1,6 +1,4 @@
 import {
-  buildSignedTx,
-  calculateChallenge,
   connect,
   getCotaCellDep,
   getJoyIDLockScript,
@@ -8,6 +6,7 @@ import {
   initConfig,
   openPopup,
   signChallenge as joySignChallenge,
+  signRawTransaction as joySignRawTransaction,
   signTransaction,
   type CKBTransaction,
   type ConnectResponseData,
@@ -161,8 +160,7 @@ export async function signRawCkbTransaction(
   showJoyIdPopupStatus(popup, "Opening JoyID", "Review the CKB transaction and confirm the signature.");
 
   const txToSign = await prepareJoyIdRawTransaction(wallet, tx, witnessIndexes, popup);
-  const challenge = await calculateChallenge(txToSign, witnessIndexes);
-  const signedChallenge = await joySignChallenge(challenge, wallet.ckbAddress, {
+  const signedTx = await joySignRawTransaction(txToSign, wallet.ckbAddress, {
     name: "LiquidLane",
     network: ckbNetwork,
     joyidAppURL,
@@ -170,13 +168,15 @@ export async function signRawCkbTransaction(
     rpcURL: ckbRpcURL,
     popup: popup ?? undefined,
     timeoutInSeconds: 300,
+    witnessIndexes,
   });
-  const signedTx = buildSignedTx(txToSign, signedChallenge, witnessIndexes);
-  assertSignedRawTransactionMatches(txToSign, signedTx);
+  if (!signedTx || !Array.isArray(signedTx.witnesses)) {
+    throw new Error("JoyID did not return a signed CKB transaction.");
+  }
+  assertSignedSpendMatches(txToSign, signedTx);
   assertSignedJoyIdWitness(signedTx, witnessIndexes[0] ?? 0);
   return signedTx;
 }
-
 async function prepareJoyIdRawTransaction(
   wallet: ConnectedCkbWallet,
   tx: CKBTransaction,
@@ -204,19 +204,14 @@ async function prepareJoyIdRawTransaction(
   return preparedTx;
 }
 
-function assertSignedRawTransactionMatches(unsignedTx: CKBTransaction, signedTx: CKBTransaction) {
-  if (rawTransactionFingerprint(unsignedTx) !== rawTransactionFingerprint(signedTx)) {
-    throw new Error("JoyID returned a signed transaction with changed raw fields. LiquidLane will not broadcast it.");
+function assertSignedSpendMatches(unsignedTx: CKBTransaction, signedTx: CKBTransaction) {
+  if (spendFingerprint(unsignedTx) !== spendFingerprint(signedTx)) {
+    throw new Error("JoyID returned a signed transaction with changed inputs or outputs. LiquidLane will not broadcast it.");
   }
 }
 
-function rawTransactionFingerprint(tx: CKBTransaction) {
+function spendFingerprint(tx: CKBTransaction) {
   return JSON.stringify({
-    cellDeps: tx.cellDeps.map((dep) => ({
-      outPoint: { txHash: dep.outPoint.txHash, index: dep.outPoint.index },
-      depType: dep.depType,
-    })),
-    headerDeps: tx.headerDeps,
     inputs: tx.inputs.map((input) => ({
       previousOutput: { txHash: input.previousOutput.txHash, index: input.previousOutput.index },
       since: input.since,
@@ -291,6 +286,34 @@ function readLeU32(hex: string) {
 
 function strip0x(value: string) {
   return value.startsWith("0x") ? value.slice(2) : value;
+}
+
+export async function dryRunCkbTransaction(tx: CKBTransaction): Promise<void> {
+  if (!ckbRpcURL?.trim()) {
+    throw new Error("CKB RPC URL is not configured for dry-running supply transactions.");
+  }
+
+  const response = await fetch(ckbRpcURL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      id: Date.now(),
+      jsonrpc: "2.0",
+      method: "dry_run_transaction",
+      params: [toRpcTransaction(tx)],
+    }),
+  });
+  if (!response.ok) {
+    throw new Error("CKB dry-run failed with HTTP " + response.status + ".");
+  }
+
+  const body = (await response.json()) as { result?: { cycles?: string }; error?: { message?: string } };
+  if (body.error) {
+    throw new Error(body.error.message ?? "CKB dry-run rejected the signed transaction.");
+  }
+  if (!body.result) {
+    throw new Error("CKB dry-run returned no verification result.");
+  }
 }
 
 export async function broadcastCkbTransaction(tx: CKBTransaction): Promise<string> {

@@ -2,6 +2,7 @@ import { type CKBTransaction } from "@joyid/ckb";
 import { addressToScript, scriptOccupied, scriptToHash, serializeWitnessArgs } from "@nervosnetwork/ckb-sdk-utils";
 import {
   broadcastCkbTransaction,
+  dryRunCkbTransaction,
   ckbNetwork,
   ckbRpcURL,
   showJoyIdPopupStatus,
@@ -114,7 +115,7 @@ export type SupplyVaultResult = {
   txHash: string;
 };
 
-export type SupplyProgressStep = "vault" | "funding" | "signing" | "broadcast";
+export type SupplyProgressStep = "vault" | "funding" | "signing" | "verify" | "broadcast";
 
 export async function supplyVaultLiquidity(
   wallet: ConnectedCkbWallet,
@@ -135,7 +136,7 @@ export async function supplyVaultLiquidity(
   const receiptType = buildReceiptType(userLock, vaultCell.type, scripts, options.intent);
   const receiptCapacity = occupiedCapacity(userLock, receiptType, RECEIPT_DATA_LEN) + CELL_CAPACITY_PAD;
   const changeCapacity = occupiedCapacity(userLock, null, 0) + CELL_CAPACITY_PAD;
-  reportProgress(options, popup, "funding", "Collecting clean wallet cells for this supply transaction.");
+  reportProgress(options, popup, "funding", "Selecting one clean JoyID wallet cell for this supply transaction.");
   const funding = selectFunding(await collectFundingCells(userLock), amount.shannons + receiptCapacity + FEE_MARGIN + changeCapacity);
   const tx = buildSupplyTransaction({
     amount,
@@ -151,7 +152,9 @@ export async function supplyVaultLiquidity(
   reportProgress(options, popup, "signing", "Review the vault supply transaction in JoyID and confirm.");
   const signedTx = await signRawCkbTransaction(wallet, tx, witnessIndexes, popup);
   assertJoyIdSignedWitness(tx, signedTx, witnessIndexes);
-  reportProgress(options, popup, "broadcast", "Broadcasting the signed vault transaction to CKB testnet.");
+  reportProgress(options, popup, "verify", "Dry-running the signed transaction on CKB testnet before broadcast.");
+  await dryRunCkbTransaction(signedTx);
+  reportProgress(options, popup, "broadcast", "Dry-run passed. Broadcasting the signed vault transaction to CKB testnet.");
   const txHash = await broadcastCkbTransaction(signedTx);
   return { tx: { ...signedTx, hash: txHash } as CKBTransaction, txHash };
 }
@@ -253,14 +256,19 @@ async function collectFundingCells(lock: JoyScript): Promise<FundingCell[]> {
 }
 
 function selectFunding(cells: FundingCell[], required: bigint) {
-  const inputs: SupplyInput[] = [];
-  let total = BigInt(0);
-  for (const cell of cells) {
-    inputs.push({ previousOutput: cell.previousOutput, since: cell.since });
-    total += cell.capacity;
-    if (total >= required) return { inputs, total };
+  const single = cells.find((cell) => cell.capacity >= required);
+  if (single) {
+    return {
+      inputs: [{ previousOutput: single.previousOutput, since: single.since }],
+      total: single.capacity,
+    };
   }
-  throw new Error(`Wallet needs at least ${formatCkb(required)} in clean CKB cells for this supply transaction.`);
+
+  const total = cells.reduce((sum, cell) => sum + cell.capacity, BigInt(0));
+  const largest = cells.reduce((max, cell) => (cell.capacity > max ? cell.capacity : max), BigInt(0));
+  throw new Error(
+    `JoyID vault supply needs one clean CKB cell of at least ${formatCkb(required)}. Largest clean cell: ${formatCkb(largest)}. Total clean CKB: ${formatCkb(total)}. Send one larger faucet/top-up to this JoyID address and retry.`,
+  );
 }
 
 function getCellsParams(lock: JoyScript, cursor: string | null): unknown[] {

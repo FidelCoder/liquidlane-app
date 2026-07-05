@@ -229,7 +229,7 @@ type Service = {
   icon: typeof CircleDollarSign;
 };
 
-export type SupplyStepId = "vault" | "intent" | "funding" | "signing" | "broadcast" | "settlement";
+export type SupplyStepId = "vault" | "intent" | "funding" | "signing" | "verify" | "broadcast" | "settlement";
 export type SupplyTxStatus = "running" | "ready" | "success" | "failed";
 
 export type SupplyTxState = {
@@ -503,6 +503,7 @@ export default function Home() {
       vault: "Checking vault",
       funding: "Selecting wallet cells",
       signing: "Waiting for JoyID",
+      verify: "Dry-running transaction",
       broadcast: "Broadcasting transaction",
     };
     let currentStep: SupplyStepId = "vault";
@@ -1165,6 +1166,7 @@ const supplySteps: { id: SupplyStepId; label: string }[] = [
   { id: "intent", label: "Intent" },
   { id: "funding", label: "Cells" },
   { id: "signing", label: "Sign" },
+  { id: "verify", label: "Verify" },
   { id: "broadcast", label: "Broadcast" },
   { id: "settlement", label: "Receipt" },
 ];
