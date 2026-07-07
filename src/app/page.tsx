@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { ConsoleApp, type ConsoleView } from "./console";
 import { deployCkbScripts, type DeploymentProgressDetail, type DeploymentResult } from "@/lib/ckbDeployment";
+import { reserveVaultCapacity, type RequestProgressStep } from "@/lib/ckbRequest";
 import { supplyVaultLiquidity, type SupplyProgressStep } from "@/lib/ckbSupply";
 import {
   connectCkbWallet,
@@ -183,6 +184,9 @@ export type LiquidityRequest = {
   lease_fee: number;
   routing_fee_bps: number;
   fiber_peer_pubkey: string | null;
+  request_cell_id: string;
+  request_tx_hash: string | null;
+  request_cell_out_point: string | null;
   status: LiquidityStatus;
   fiber_temporary_channel_id: string | null;
   channel_id: string | null;
@@ -199,6 +203,26 @@ export type LiquidityQuote = {
   routing_fee_bps: number;
   available: boolean;
   available_liquidity: number;
+};
+
+export type RequestIntent = {
+  id: string;
+  merchant_id: string;
+  merchant_name: string;
+  ckb_address: string;
+  asset: string;
+  amount: number;
+  duration_days: number;
+  lease_fee: number;
+  routing_fee_bps: number;
+  fiber_peer_pubkey: string | null;
+  public_channel: boolean;
+  request_cell_id: string;
+  memo: string;
+  status: IntentStatus;
+  tx_hash: string | null;
+  created_at: string;
+  expires_at: string;
 };
 
 export type ActivityEvent = {
@@ -666,15 +690,68 @@ export default function Home() {
 
   async function handleRequest(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const amount = Number(form.get("amount"));
+    const durationDays = Number(form.get("duration_days"));
+    const asset = String(form.get("asset") ?? DEFAULT_ASSET).trim().toUpperCase();
     const payload = {
-      asset: String(form.get("asset") ?? DEFAULT_ASSET).trim().toUpperCase(),
-      amount: Number(form.get("amount")),
-      duration_days: Number(form.get("duration_days")),
+      asset,
+      amount,
+      duration_days: durationDays,
       fiber_peer_pubkey: blankToUndefined(form.get("fiber_peer_pubkey")),
     };
+    const progressTitle: Record<RequestProgressStep, string> = {
+      vault: "Checking vault",
+      funding: "Selecting wallet cells",
+      signing: "Waiting for JoyID",
+      verify: "Dry-running request",
+      broadcast: "Broadcasting request",
+    };
+
     setBusy("request");
+    let signPopup: JoyIdPopup | undefined;
     try {
+      if (!Number.isFinite(amount) || amount <= 0) {
+        throw new Error("Requested capacity must be greater than zero.");
+      }
+      if (!Number.isFinite(durationDays) || durationDays <= 0) {
+        throw new Error("Request duration must be greater than zero.");
+      }
+      if (!activeVault?.configured || !activeVault.address?.trim()) {
+        throw new Error("LiquidLane vault is not configured yet.");
+      }
+
+      let activeWallet = wallet;
+      if (!activeWallet) {
+        const popup = openJoyIdPopup();
+        if (!popup) {
+          throw new Error("Browser blocked the JoyID popup. Enable popups for localhost and try again.");
+        }
+        setStatus("Opening JoyID to reconnect your signer.");
+        activeWallet = await connectCkbWallet(popup);
+        if (dashboard?.user.ckb_address && activeWallet.ckbAddress !== dashboard.user.ckb_address) {
+          throw new Error("Connected wallet does not match this LiquidLane session.");
+        }
+        setWallet(activeWallet);
+        setCkbAddress(activeWallet.ckbAddress);
+        window.localStorage.setItem(ADDRESS_KEY, activeWallet.ckbAddress);
+        setStatus("JoyID reconnected. Click Request capacity again to sign the request transaction.");
+        return;
+      }
+
+      signPopup = openJoyIdPopup();
+      if (!signPopup) {
+        throw new Error("Browser blocked the JoyID popup. Enable popups for localhost and try again.");
+      }
+
+      showJoyIdPopupStatus(signPopup, "Preparing request", "LiquidLane is checking live vault liquidity.");
+      setStatus("Checking live vault liquidity.");
+      const requestVault = await loadVault();
+      if (!requestVault?.configured || !requestVault.address?.trim()) {
+        throw new Error("LiquidLane vault is not configured yet.");
+      }
+
       const quoteData = await request<LiquidityQuote>("/liquidity/quote", {
         method: "POST",
         body: JSON.stringify(payload),
@@ -682,17 +759,45 @@ export default function Home() {
       setQuote(quoteData);
       if (!quoteData.available) {
         setStatus(`Only ${assetAmount(quoteData.available_liquidity, quoteData.asset)} is available.`);
+        showJoyIdPopupStatus(signPopup, "Request unavailable", "The vault does not have enough available capacity.");
         return;
       }
-      await request<LiquidityRequest>("/liquidity/requests", {
+
+      showJoyIdPopupStatus(signPopup, "Preparing request", "Core is creating your capacity request intent.");
+      setStatus("Creating the capacity request intent.");
+      const intent = await request<RequestIntent>("/liquidity/request/intents", {
         method: "POST",
         body: JSON.stringify(payload),
       });
-      event.currentTarget.reset();
-      setStatus("Capacity reserved. Open the Fiber channel when the peer is ready.");
+
+      const signed = await reserveVaultCapacity(activeWallet, {
+        vault: requestVault,
+        intent,
+        asset,
+        amount,
+        onProgress(step, message) {
+          setStatus(`${progressTitle[step]}: ${message}`);
+        },
+      }, signPopup);
+
+      showJoyIdPopupStatus(signPopup, "Recording request", "Core is verifying the request cell transaction.");
+      await request<LiquidityRequest>("/liquidity/requests", {
+        method: "POST",
+        body: JSON.stringify({
+          ...payload,
+          intent_id: intent.id,
+          request_tx_hash: signed.txHash,
+          request_cell_out_point: signed.requestCellOutPoint,
+          signed_tx: signed.tx,
+        }),
+      });
+      formElement.reset();
+      setStatus(`Capacity request broadcast ${shortHash(signed.txHash)} and reserved on LiquidLane.`);
       await refresh();
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Capacity request failed.");
+      const message = error instanceof Error ? error.message : "Capacity request failed.";
+      showJoyIdPopupStatus(signPopup, "Request failed", message);
+      setStatus(message);
     } finally {
       setBusy(null);
     }
@@ -1098,6 +1203,12 @@ export default function Home() {
                       <strong>{request.merchant_name}</strong>
                       <span>{assetAmount(request.amount, request.asset)} · {request.duration_days} days · fee {assetAmount(request.lease_fee, request.asset)}</span>
                       {request.fiber_peer_pubkey ? <code>{shortPubkey(request.fiber_peer_pubkey)}</code> : <span>No Fiber peer pubkey attached</span>}
+                      <code>{shortId(request.request_cell_id)}</code>
+                      {request.request_tx_hash ? (
+                        <a className="inline-explorer" href={transactionExplorerUrl(request.request_tx_hash)} target="_blank" rel="noreferrer">
+                          Request tx <ExternalLink size={12} />
+                        </a>
+                      ) : null}
                       {request.fiber_note ? <span>{request.fiber_note}</span> : null}
                       {request.fiber_error ? <span className="error-text">{request.fiber_error}</span> : null}
                     </div>

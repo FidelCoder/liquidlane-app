@@ -2,9 +2,9 @@ import { type CKBTransaction } from "@joyid/ckb";
 import { addressToScript, scriptOccupied, scriptToHash, serializeWitnessArgs } from "@nervosnetwork/ckb-sdk-utils";
 import {
   broadcastCkbTransaction,
-  dryRunCkbTransaction,
   ckbNetwork,
   ckbRpcURL,
+  dryRunCkbTransaction,
   showJoyIdPopupStatus,
   signRawCkbTransaction,
   type ConnectedCkbWallet,
@@ -13,8 +13,8 @@ import {
 
 const SHANNONS_PER_CKB = BigInt(100_000_000);
 const MAX_COLLECTION_ROUNDS = 10;
-const RECEIPT_DATA_LEN = 41;
 const VAULT_DATA_LEN = 33;
+const REQUEST_DATA_LEN = 26;
 const FEE_MARGIN = BigInt(2) * SHANNONS_PER_CKB;
 const CELL_CAPACITY_PAD = BigInt(2) * SHANNONS_PER_CKB;
 const JOYID_CELL_DEP_TX_HASH = process.env.NEXT_PUBLIC_JOYID_CELL_DEP_TX_HASH;
@@ -33,7 +33,7 @@ type CellDep = CKBTransaction["cellDeps"][number];
 type JoyScript = { codeHash: string; hashType: HashType; args: string };
 type RpcScript = { code_hash: string; hash_type: HashType; args: string };
 type OutPoint = { txHash: string; index: string };
-type SupplyInput = { previousOutput: OutPoint; since: string };
+type RequestInput = { previousOutput: OutPoint; since: string };
 
 type VaultScripts = {
   vault_lock_code_hash: string | null;
@@ -55,11 +55,12 @@ type VaultConfig = {
   scripts?: VaultScripts;
 };
 
-type SupplyIntent = {
+type RequestIntent = {
   id: string;
   asset: string;
   amount: number;
-  vault_address: string;
+  duration_days: number;
+  lease_fee: number;
 };
 
 type RpcCell = {
@@ -86,9 +87,9 @@ type GetLiveCellResponse = {
   status: "live" | "dead" | "unknown";
 };
 
-type FundingCell = SupplyInput & { capacity: bigint };
+type FundingCell = RequestInput & { capacity: bigint };
 type VaultCell = {
-  input: SupplyInput;
+  input: RequestInput;
   capacity: bigint;
   lock: JoyScript;
   type: JoyScript;
@@ -102,92 +103,101 @@ type VaultData = {
   feeBalance: bigint;
 };
 
-export type SupplyVaultOptions = {
+export type RequestCapacityOptions = {
   vault: VaultConfig;
-  intent: SupplyIntent;
+  intent: RequestIntent;
   asset: string;
   amount: number;
-  onProgress?: (step: SupplyProgressStep, message: string) => void;
+  onProgress?: (step: RequestProgressStep, message: string) => void;
 };
 
-export type SupplyVaultResult = {
+export type RequestCapacityResult = {
   tx: CKBTransaction;
   txHash: string;
+  requestCellOutPoint: string;
 };
 
-export type SupplyProgressStep = "vault" | "funding" | "signing" | "verify" | "broadcast";
+export type RequestProgressStep = "vault" | "funding" | "signing" | "verify" | "broadcast";
 
-export async function supplyVaultLiquidity(
+export async function reserveVaultCapacity(
   wallet: ConnectedCkbWallet,
-  options: SupplyVaultOptions,
+  options: RequestCapacityOptions,
   popup?: JoyIdPopup,
-): Promise<SupplyVaultResult> {
+): Promise<RequestCapacityResult> {
   if (options.asset.trim().toUpperCase() !== "CKB") {
-    throw new Error("The live vault supply path is currently enabled for CKB.");
+    throw new Error("The live capacity request path is currently enabled for CKB.");
   }
-  const amount = ckbAmount(options.amount);
-  if (options.vault.address !== options.intent.vault_address) {
-    throw new Error("Supply intent does not match the active vault address.");
+  if (options.amount !== options.intent.amount) {
+    throw new Error("Capacity request amount does not match the active request intent.");
   }
   if (!options.vault.address?.trim()) {
     throw new Error("LiquidLane vault address is not configured.");
   }
 
+  const amount = ckbAmount(options.amount);
+  const leaseFee = ckbAmount(options.intent.lease_fee);
   const scripts = requiredScripts(options.vault.scripts);
   const userLock = toJoyScript(addressToScript(wallet.ckbAddress));
+  const operatorLock = toJoyScript(addressToScript(options.vault.address));
 
-  reportProgress(options, popup, "vault", "Loading the active LiquidLane vault cell from CKB testnet.");
+  reportProgress(options, popup, "vault", "Loading the active vault cell for the capacity reservation.");
   const vaultCell = await loadVaultCell(options.vault, scripts);
   const configuredVaultLock = toJoyScript(addressToScript(options.vault.address));
   if (!sameScript(vaultCell.lock, configuredVaultLock)) {
     throw new Error("Configured vault cell lock does not match the active LiquidLane vault address.");
   }
+  if (availableVaultUnits(vaultCell.data) < amount.units) {
+    throw new Error("Vault has insufficient available CKB for this capacity request.");
+  }
 
-  const receiptType = buildReceiptType(userLock, vaultCell.type, scripts, options.intent);
-  const receiptCapacity = occupiedCapacity(userLock, receiptType, RECEIPT_DATA_LEN) + CELL_CAPACITY_PAD;
+  const requestType = buildRequestType(userLock, operatorLock, vaultCell.type, scripts, options.intent.id);
+  const requestCapacity = occupiedCapacity(userLock, requestType, REQUEST_DATA_LEN) + CELL_CAPACITY_PAD;
   const minChangeCapacity = occupiedCapacity(userLock, null, 0) + CELL_CAPACITY_PAD;
-  const requiredFunding = amount.shannons + receiptCapacity + minChangeCapacity + FEE_MARGIN;
+  const requiredFunding = requestCapacity + minChangeCapacity + FEE_MARGIN;
 
-  reportProgress(options, popup, "funding", "Selecting a clean JoyID CKB cell to fund the vault update and LP receipt.");
+  reportProgress(options, popup, "funding", "Selecting a JoyID CKB cell to create the request cell.");
   const funding = selectFunding(await collectFundingCells(userLock), requiredFunding);
-  const unsignedTx = buildSupplyTransaction({
+  const unsignedTx = buildRequestTransaction({
     amount,
+    leaseFee,
     funding,
     userLock,
     vaultCell,
-    receiptType,
-    receiptCapacity,
+    requestType,
+    requestCapacity,
     minChangeCapacity,
     scripts,
+    expiry: requestExpiry(options.intent.duration_days),
   });
 
-  reportProgress(options, popup, "signing", "Review the LiquidLane vault update in JoyID and confirm.");
+  reportProgress(options, popup, "signing", "Review the LiquidLane capacity request in JoyID and confirm.");
   const signedTx = await signRawCkbTransaction(wallet, unsignedTx, [0], popup);
   assertJoyIdSignedWitness(unsignedTx, signedTx, [0]);
 
-  reportProgress(options, popup, "verify", "Dry-running the signed vault update before broadcast.");
+  reportProgress(options, popup, "verify", "Dry-running the signed capacity request before broadcast.");
   await dryRunCkbTransaction(signedTx);
 
-  reportProgress(options, popup, "broadcast", "Broadcasting the verified vault update to CKB testnet.");
+  reportProgress(options, popup, "broadcast", "Broadcasting the verified capacity request to CKB testnet.");
   const txHash = await broadcastCkbTransaction(signedTx);
-  return { tx: { ...signedTx, hash: txHash }, txHash };
+  return { tx: { ...signedTx, hash: txHash }, txHash, requestCellOutPoint: `${txHash}#0x1` };
 }
 
-function buildSupplyTransaction(input: {
-  amount: { units: bigint; shannons: bigint };
-  funding: { inputs: SupplyInput[]; total: bigint };
+function buildRequestTransaction(input: {
+  amount: { units: bigint };
+  leaseFee: { units: bigint };
+  funding: { inputs: RequestInput[]; total: bigint };
   userLock: JoyScript;
   vaultCell: VaultCell;
-  receiptType: JoyScript;
-  receiptCapacity: bigint;
+  requestType: JoyScript;
+  requestCapacity: bigint;
   minChangeCapacity: bigint;
   scripts: RequiredScripts;
+  expiry: bigint;
 }): CKBTransaction {
-  const vaultCapacity = input.vaultCell.capacity + input.amount.shannons;
-  const spendCapacity = input.amount.shannons + input.receiptCapacity + FEE_MARGIN;
+  const spendCapacity = input.requestCapacity + FEE_MARGIN;
   const changeCapacity = input.funding.total - spendCapacity;
   if (changeCapacity < input.minChangeCapacity) {
-    throw new Error("Funding cell does not leave enough capacity for JoyID change after vault supply.");
+    throw new Error("Funding cell does not leave enough capacity for JoyID change after request creation.");
   }
 
   return {
@@ -196,20 +206,20 @@ function buildSupplyTransaction(input: {
       ...configuredJoyIdCellDep(),
       codeDep(input.scripts.vault_lock_out_point),
       codeDep(input.scripts.vault_type_out_point),
-      codeDep(input.scripts.lp_receipt_type_out_point),
+      codeDep(input.scripts.request_type_out_point),
     ],
     headerDeps: [],
     inputs: [...input.funding.inputs, input.vaultCell.input],
     outputs: [
       {
-        capacity: toHex(vaultCapacity),
+        capacity: toHex(input.vaultCell.capacity),
         lock: input.vaultCell.lock,
         type: input.vaultCell.type,
       },
       {
-        capacity: toHex(input.receiptCapacity),
+        capacity: toHex(input.requestCapacity),
         lock: input.userLock,
-        type: input.receiptType,
+        type: input.requestType,
       },
       {
         capacity: toHex(changeCapacity),
@@ -219,9 +229,9 @@ function buildSupplyTransaction(input: {
     outputsData: [
       vaultDataHex({
         ...input.vaultCell.data,
-        total: input.vaultCell.data.total + input.amount.units,
+        reserved: input.vaultCell.data.reserved + input.amount.units,
       }),
-      receiptDataHex(input.amount.units),
+      requestDataHex({ status: 1, amount: input.amount.units, leaseFee: input.leaseFee.units, expiry: input.expiry }),
       "0x",
     ],
     witnesses: [emptyWitness(), ...input.funding.inputs.slice(1).map(() => "0x"), "0x"],
@@ -259,14 +269,13 @@ async function collectFundingCells(lock: JoyScript): Promise<FundingCell[]> {
     const result: GetCellsResponse = await callCkbRpc<GetCellsResponse>("get_cells", getCellsParams(lock, cursor));
     for (const cell of result.objects) {
       if (cell.output.type) continue;
-      if ((cell.output_data ?? "0x") !== "0x") continue;
       cells.push({
         previousOutput: { txHash: cell.out_point.tx_hash, index: cell.out_point.index },
         since: "0x0",
         capacity: BigInt(cell.output.capacity),
       });
     }
-    if (!result.objects.length || cursor === result.last_cursor) break;
+    if (!result.last_cursor || result.last_cursor === cursor || result.objects.length === 0) break;
     cursor = result.last_cursor;
   }
   return cells.sort((left, right) => compareBigInt(left.capacity, right.capacity));
@@ -275,17 +284,21 @@ async function collectFundingCells(lock: JoyScript): Promise<FundingCell[]> {
 function selectFunding(cells: FundingCell[], required: bigint) {
   const single = cells.find((cell) => cell.capacity >= required);
   if (single) {
-    return {
-      inputs: [{ previousOutput: single.previousOutput, since: single.since }],
-      total: single.capacity,
-    };
+    return { inputs: [toInput(single)], total: single.capacity };
   }
-
-  const total = cells.reduce((sum, cell) => sum + cell.capacity, BigInt(0));
+  const inputs: RequestInput[] = [];
+  let total = BigInt(0);
+  for (const cell of [...cells].sort((left, right) => compareBigInt(right.capacity, left.capacity))) {
+    inputs.push(toInput(cell));
+    total += cell.capacity;
+    if (total >= required) return { inputs, total };
+  }
   const largest = cells.reduce((max, cell) => (cell.capacity > max ? cell.capacity : max), BigInt(0));
-  throw new Error(
-    `JoyID vault supply needs one clean CKB cell of at least ${formatCkb(required)}. Largest clean cell: ${formatCkb(largest)}. Total clean CKB: ${formatCkb(total)}. Send one larger faucet/top-up to this JoyID address and retry.`,
-  );
+  throw new Error(`Wallet needs ${formatCkb(required)} unlocked CKB to create the request cell. Largest clean cell is ${formatCkb(largest)}.`);
+}
+
+function toInput(cell: FundingCell): RequestInput {
+  return { previousOutput: cell.previousOutput, since: cell.since };
 }
 
 function getCellsParams(lock: JoyScript, cursor: string | null): unknown[] {
@@ -293,9 +306,7 @@ function getCellsParams(lock: JoyScript, cursor: string | null): unknown[] {
     {
       script: toRpcScript(lock),
       script_type: "lock",
-      script_search_mode: "exact",
       filter: { output_data_len_range: ["0x0", "0x1"] },
-      with_data: true,
     },
     "asc",
     "0x64",
@@ -305,7 +316,7 @@ function getCellsParams(lock: JoyScript, cursor: string | null): unknown[] {
 }
 
 async function callCkbRpc<T>(method: string, params: unknown[]): Promise<T> {
-  if (!ckbRpcURL?.trim()) throw new Error("NEXT_PUBLIC_CKB_RPC_URL is required for vault supply.");
+  if (!ckbRpcURL?.trim()) throw new Error("NEXT_PUBLIC_CKB_RPC_URL is required for capacity requests.");
   const response = await fetch(ckbRpcURL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -318,16 +329,20 @@ async function callCkbRpc<T>(method: string, params: unknown[]): Promise<T> {
   return body.result;
 }
 
-function buildReceiptType(userLock: JoyScript, vaultType: JoyScript, scripts: RequiredScripts, intent: SupplyIntent): JoyScript {
+function buildRequestType(
+  userLock: JoyScript,
+  operatorLock: JoyScript,
+  vaultType: JoyScript,
+  scripts: RequiredScripts,
+  intentId: string,
+): JoyScript {
   const args = joinHex([
     scriptToHash(vaultType),
     scriptToHash(userLock),
-    scripts.request_type_code_hash,
-    scripts.fee_claim_type_code_hash,
-    assetId(intent.asset),
-    positionId(intent.id),
+    scriptToHash(operatorLock),
+    requestId(intentId),
   ]);
-  return { codeHash: scripts.lp_receipt_type_code_hash, hashType: "data1", args };
+  return { codeHash: scripts.request_type_code_hash, hashType: "data1", args };
 }
 
 function requiredScripts(scripts?: VaultScripts): RequiredScripts {
@@ -337,10 +352,8 @@ function requiredScripts(scripts?: VaultScripts): RequiredScripts {
     vault_lock_out_point: requireOutPoint(scripts.vault_lock_out_point, "vault lock out-point"),
     vault_type_code_hash: requireHash(scripts.vault_type_code_hash, "vault type code hash"),
     vault_type_out_point: requireOutPoint(scripts.vault_type_out_point, "vault type out-point"),
-    lp_receipt_type_code_hash: requireHash(scripts.lp_receipt_type_code_hash, "LP receipt code hash"),
-    lp_receipt_type_out_point: requireOutPoint(scripts.lp_receipt_type_out_point, "LP receipt out-point"),
     request_type_code_hash: requireHash(scripts.request_type_code_hash, "request code hash"),
-    fee_claim_type_code_hash: requireHash(scripts.fee_claim_type_code_hash, "fee claim code hash"),
+    request_type_out_point: requireOutPoint(scripts.request_type_out_point, "request out-point"),
   };
 }
 
@@ -349,10 +362,8 @@ type RequiredScripts = {
   vault_lock_out_point: string;
   vault_type_code_hash: string;
   vault_type_out_point: string;
-  lp_receipt_type_code_hash: string;
-  lp_receipt_type_out_point: string;
   request_type_code_hash: string;
-  fee_claim_type_code_hash: string;
+  request_type_out_point: string;
 };
 
 function parseVaultData(hex: string): VaultData {
@@ -370,8 +381,8 @@ function vaultDataHex(data: VaultData) {
   return joinHex(["0x01", u64Le(data.total), u64Le(data.reserved), u64Le(data.deployed), u64Le(data.feeBalance)]);
 }
 
-function receiptDataHex(amount: bigint) {
-  return joinHex(["0x01", u64Le(amount), u64Le(amount), u64Le(BigInt(0)), u64Le(BigInt(0)), u64Le(BigInt(0))]);
+function requestDataHex(data: { status: number; amount: bigint; leaseFee: bigint; expiry: bigint }) {
+  return joinHex([`0x${data.status.toString(16).padStart(2, "0")}`, u64Le(data.amount), u64Le(data.leaseFee), u64Le(data.expiry)]);
 }
 
 function occupiedCapacity(lock: JoyScript, type: JoyScript | null, dataLength: number) {
@@ -401,9 +412,18 @@ function parseOutPoint(value?: string | null): OutPoint {
 }
 
 function ckbAmount(value: number) {
-  if (!Number.isSafeInteger(value) || value <= 0) throw new Error("Supply amount must be a positive whole CKB amount.");
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error("Amount must be a positive whole CKB amount.");
   const units = BigInt(value);
   return { units, shannons: units * SHANNONS_PER_CKB };
+}
+
+function requestExpiry(durationDays: number) {
+  const days = Number.isSafeInteger(durationDays) && durationDays > 0 ? durationDays : 1;
+  return BigInt(Math.floor(Date.now() / 1000) + days * 24 * 60 * 60);
+}
+
+function availableVaultUnits(data: VaultData) {
+  return data.total - data.reserved - data.deployed;
 }
 
 function toJoyScript(script: { codeHash?: string; code_hash?: string; hashType?: string; hash_type?: string; args?: string }): JoyScript {
@@ -429,16 +449,16 @@ function emptyWitness() {
 
 function assertJoyIdSignedWitness(unsignedTx: CKBTransaction, signedTx: CKBTransaction, witnessIndexes: number[]) {
   if (!Array.isArray(signedTx.witnesses) || signedTx.witnesses.length === 0) {
-    throw new Error("JoyID returned no signed witnesses. No vault supply transaction was broadcast.");
+    throw new Error("JoyID returned no signed witnesses. No capacity request transaction was broadcast.");
   }
   const signed = witnessIndexes.some((index) => (signedTx.witnesses[index] ?? "0x") !== (unsignedTx.witnesses[index] ?? "0x"));
   if (!signed) {
-    throw new Error("JoyID returned without a CKB signature. No vault supply transaction was broadcast.");
+    throw new Error("JoyID returned without a CKB signature. No capacity request transaction was broadcast.");
   }
 }
 
-function reportProgress(options: SupplyVaultOptions, popup: JoyIdPopup | undefined, step: SupplyProgressStep, message: string) {
-  const title = step === "signing" ? "Opening JoyID" : "Preparing CKB transaction";
+function reportProgress(options: RequestCapacityOptions, popup: JoyIdPopup | undefined, step: RequestProgressStep, message: string) {
+  const title = step === "signing" ? "Opening JoyID" : "Preparing CKB request";
   options.onProgress?.(step, message);
   showJoyIdPopupStatus(popup, title, message);
 }
@@ -469,18 +489,8 @@ function joinHex(values: string[]) {
   return `0x${values.map((value) => value.replace(/^0x/, "")).join("")}`;
 }
 
-function assetId(asset: string) {
-  return asciiToFixedHex(asset.trim().toUpperCase(), 32);
-}
-
-function positionId(id: string) {
-  return `0x${id.replace(/[^0-9a-fA-F]/g, "").slice(0, 64).padEnd(64, "0")}`;
-}
-
-function asciiToFixedHex(value: string, length: number) {
-  const bytes = new TextEncoder().encode(value).slice(0, length);
-  const padded = [...Array.from(bytes), ...Array(Math.max(0, length - bytes.length)).fill(0)];
-  return `0x${padded.map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+function requestId(id: string) {
+  return id.replace(/[^0-9a-fA-F]/g, "").slice(0, 64).padEnd(64, "0");
 }
 
 function hexBytes(hex: string) {
