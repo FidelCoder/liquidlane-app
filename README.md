@@ -26,7 +26,7 @@ The app uses JoyID on CKB:
 2. Choose a service and open a Core wallet session.
 3. Sign only when confirming a value-moving action.
 4. Supplying liquidity first creates a Core vault intent with the active vault address and memo.
-5. The wallet signs and broadcasts that CKB transaction, then Core settles the intent into an LP position after receiving the transaction hash and signed transaction proof.
+5. The wallet signs a vault update transaction that spends the active vault cell, mints an LP receipt, dry-runs, broadcasts, then Core settles the intent after chain verification.
 
 ## Fiber Lifecycle
 
@@ -40,11 +40,9 @@ The vault address is loaded from LiquidLane Core through `/vault`; configure it 
 
 ## Testnet Script Deployment
 
-Operators can deploy LiquidLane CKB script binaries from the app with JoyID. Core serves the compiled script package from `/deployment/package`; the app collects funded JoyID cells through CKB RPC, asks JoyID to sign a raw transaction, broadcasts it, and shows the deployment transaction plus code-cell out-points.
+The public app does not expose script deployment controls. LiquidLane scripts and the active vault are deployed from Core-side tooling, then Core exposes the active vault config through `/vault` and `/dashboard`.
 
-This keeps deployer keys inside JoyID. The app does not ask for private keys or mnemonics.
-
-LiquidLane defaults to the current verified JoyID Pudge code cell `0x4a596d31dc35e88fb1591debbf680b04a44b4a434e3a94453c21ea8950ffb4d9#0x0` with dep type `code`, and validates it with `get_live_cell` before signing. Override `NEXT_PUBLIC_JOYID_CELL_DEP_TX_HASH`, `NEXT_PUBLIC_JOYID_CELL_DEP_INDEX`, and `NEXT_PUBLIC_JOYID_CELL_DEP_TYPE` only if JoyID rotates the testnet deployment again.
+Use `liquidlane-core/docs/testnet-deployment.md` as the source of truth for active CKB testnet script transactions, code-cell out-points, vault out-point, and explorer links.
 
 ## Checks
 

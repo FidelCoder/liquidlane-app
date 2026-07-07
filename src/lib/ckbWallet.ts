@@ -7,7 +7,6 @@ import {
   openPopup,
   signChallenge as joySignChallenge,
   signRawTransaction as joySignRawTransaction,
-  signTransaction,
   type CKBTransaction,
   type ConnectResponseData,
   type SignChallengeResponseData,
@@ -31,19 +30,6 @@ export type CkbWalletProof = ConnectedCkbWallet & {
   signature: string;
 };
 
-export type SupplyTransactionRequest = {
-  asset: string;
-  amount: number;
-  to: string;
-  memo?: string;
-};
-
-export type SignedSupplyTransaction = {
-  tx: CKBTransaction;
-  txHash: string | null;
-  memo: string;
-};
-
 export type JoyIdPopup = Window | null;
 
 export const ckbNetwork = (process.env.NEXT_PUBLIC_CKB_NETWORK === "mainnet" ? "mainnet" : "testnet") as
@@ -54,6 +40,10 @@ const joyidAppURL = process.env.NEXT_PUBLIC_JOYID_APP_URL ?? (ckbNetwork === "ma
 const joyidServerURL = process.env.NEXT_PUBLIC_JOYID_SERVER_URL ?? (ckbNetwork === "mainnet" ? "https://api.joy.id/api/v1" : "https://api.testnet.joyid.dev/api/v1");
 const joyidAggregatorURL = process.env.NEXT_PUBLIC_JOYID_AGGREGATOR_URL ?? (ckbNetwork === "mainnet" ? "https://cota.nervina.dev/mainnet-aggregator" : "https://cota.nervina.dev/aggregator");
 export const ckbRpcURL = normalizeCkbRpcURL(process.env.NEXT_PUBLIC_CKB_RPC_URL);
+
+const JOYID_SIGN_TIMEOUT_SECONDS = 120;
+const JOYID_POPUP_POLL_MS = 500;
+const CKB_RPC_TIMEOUT_MS = 45_000;
 
 export async function connectCkbWallet(popup?: JoyIdPopup): Promise<ConnectedCkbWallet> {
   configureJoyID();
@@ -88,53 +78,6 @@ export async function signCkbChallenge(challengeMessage: string, wallet: Connect
   };
 }
 
-export async function signSupplyTransaction(
-  wallet: ConnectedCkbWallet,
-  request: SupplyTransactionRequest,
-  popup?: JoyIdPopup,
-): Promise<SignedSupplyTransaction> {
-  configureJoyID();
-
-  const asset = request.asset.trim().toUpperCase();
-  if (asset !== "CKB") {
-    throw new Error("Direct wallet supply is currently enabled for CKB vault transactions.");
-  }
-  if (!request.to.trim()) {
-    throw new Error("Vault CKB address is not configured.");
-  }
-  if (!Number.isFinite(request.amount) || request.amount <= 0) {
-    throw new Error("Supply amount must be greater than zero.");
-  }
-
-  const memo = request.memo?.trim() || `LiquidLane supply ${asset} ${request.amount} from ${wallet.ckbAddress}`;
-  const tx = await signTransaction(
-    {
-      from: wallet.ckbAddress,
-      to: request.to.trim(),
-      amount: String(request.amount),
-      data: memo,
-    },
-    {
-      name: "LiquidLane",
-      network: ckbNetwork,
-      joyidAppURL,
-      joyidServerURL,
-      rpcURL: ckbRpcURL,
-      popup: popup ?? undefined,
-      timeoutInSeconds: 120,
-    },
-  );
-  await dryRunCkbTransaction(tx);
-  const txHash = await broadcastCkbTransaction(tx);
-
-  return {
-    tx: { ...tx, hash: txHash },
-    txHash,
-    memo,
-  };
-}
-
-
 export function openJoyIdPopup(): JoyIdPopup {
   configureJoyID();
   return openPopup("");
@@ -158,26 +101,90 @@ export async function signRawCkbTransaction(
   popup?: JoyIdPopup,
 ): Promise<CKBTransaction> {
   configureJoyID();
-  showJoyIdPopupStatus(popup, "Opening JoyID", "Review the CKB transaction and confirm the signature.");
+  showJoyIdPopupStatus(popup, "Opening JoyID", "Review the CKB vault transaction and confirm the signature.");
 
   const txToSign = await prepareJoyIdRawTransaction(wallet, tx, witnessIndexes, popup);
-  const signedTx = await joySignRawTransaction(txToSign, wallet.ckbAddress, {
-    name: "LiquidLane",
-    network: ckbNetwork,
-    joyidAppURL,
-    joyidServerURL,
-    rpcURL: ckbRpcURL,
-    popup: popup ?? undefined,
-    timeoutInSeconds: 300,
-    witnessIndexes,
-  });
-  if (!signedTx || !Array.isArray(signedTx.witnesses)) {
-    throw new Error("JoyID did not return a signed CKB transaction.");
+  try {
+    const signedTx = await awaitJoyIdPopup(
+      joySignRawTransaction(txToSign, wallet.ckbAddress, {
+        name: "LiquidLane",
+        network: ckbNetwork,
+        joyidAppURL,
+        joyidServerURL,
+        rpcURL: ckbRpcURL,
+        popup: popup ?? undefined,
+        timeoutInSeconds: JOYID_SIGN_TIMEOUT_SECONDS,
+        witnessIndexes,
+      }),
+      popup,
+      JOYID_SIGN_TIMEOUT_SECONDS,
+      "JoyID CKB signing",
+    );
+    if (!signedTx || !Array.isArray(signedTx.witnesses)) {
+      throw new Error("JoyID did not return a signed CKB transaction.");
+    }
+    assertSignedSpendMatches(txToSign, signedTx);
+    assertSignedJoyIdWitness(signedTx, witnessIndexes[0] ?? 0);
+    return signedTx;
+  } catch (error) {
+    const message = normalizeJoyIdSigningError(error);
+    showJoyIdPopupStatus(popup, "Signing failed", message);
+    throw new Error(message);
   }
-  assertSignedSpendMatches(txToSign, signedTx);
-  assertSignedJoyIdWitness(signedTx, witnessIndexes[0] ?? 0);
-  return signedTx;
 }
+function awaitJoyIdPopup<T>(promise: Promise<T>, popup: JoyIdPopup | undefined, timeoutSeconds: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timeoutId = setTimeout(() => {
+      finish(() => reject(new Error(`${label} timed out after ${timeoutSeconds} seconds. Close JoyID and try again.`)));
+      closePopup(popup);
+    }, timeoutSeconds * 1000);
+    const pollId = popup ? setInterval(() => {
+      if (popup.closed) {
+        finish(() => reject(new Error(`${label} popup closed before a signature was returned.`)));
+      }
+    }, JOYID_POPUP_POLL_MS) : undefined;
+
+    function finish(action: () => void) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      if (pollId) clearInterval(pollId);
+      action();
+    }
+
+    promise.then(
+      (value) => finish(() => resolve(value)),
+      (error) => finish(() => reject(error)),
+    );
+  });
+}
+
+function closePopup(popup: JoyIdPopup | undefined) {
+  try {
+    if (popup && !popup.closed) popup.close();
+  } catch {
+    // Cross-origin popups may reject close checks in some browsers.
+  }
+}
+
+function normalizeJoyIdSigningError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "JoyID signing failed.");
+  if (/popup closed/i.test(message)) {
+    return "JoyID signing was closed before LiquidLane received a signature. No transaction was broadcast.";
+  }
+  if (/timed out|timeout/i.test(message)) {
+    return "JoyID signing timed out before LiquidLane received a signature. No transaction was broadcast.";
+  }
+  if (/invalid ckb address format/i.test(message)) {
+    return "JoyID rejected the CKB signer address format. Disconnect, reconnect JoyID on CKB testnet, and retry. No transaction was broadcast.";
+  }
+  if (/cancel|reject|denied/i.test(message)) {
+    return "JoyID signing was cancelled. No transaction was broadcast.";
+  }
+  return message;
+}
+
 async function prepareJoyIdRawTransaction(
   wallet: ConnectedCkbWallet,
   tx: CKBTransaction,
@@ -405,60 +412,127 @@ function strip0x(value: string) {
 }
 
 export async function dryRunCkbTransaction(tx: CKBTransaction): Promise<void> {
-  if (!ckbRpcURL?.trim()) {
-    throw new Error("CKB RPC URL is not configured for dry-running supply transactions.");
-  }
-
-  const response = await fetch(ckbRpcURL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      id: Date.now(),
-      jsonrpc: "2.0",
-      method: "dry_run_transaction",
-      params: [toRpcTransaction(tx)],
-    }),
-  });
-  if (!response.ok) {
-    throw new Error("CKB dry-run failed with HTTP " + response.status + ".");
-  }
-
-  const body = (await response.json()) as { result?: { cycles?: string }; error?: { message?: string } };
-  if (body.error) {
-    throw new Error(body.error.message ?? "CKB dry-run rejected the signed transaction.");
-  }
-  if (!body.result) {
-    throw new Error("CKB dry-run returned no verification result.");
-  }
+  assertRpcTransactionReady(tx, "dry-run");
+  await callCkbRpcForTransaction<{ cycles?: string }>(
+    "dry_run_transaction",
+    [toRpcTransaction(tx)],
+    tx,
+    "CKB dry-run",
+  );
 }
 
 export async function broadcastCkbTransaction(tx: CKBTransaction): Promise<string> {
+  assertRpcTransactionReady(tx, "broadcast");
+  return callCkbRpcForTransaction<string>(
+    "send_transaction",
+    [toRpcTransaction(tx), "passthrough"],
+    tx,
+    "CKB broadcast",
+  );
+}
+
+type CkbRpcError = {
+  code?: number;
+  message?: string;
+  data?: unknown;
+};
+
+type CkbRpcResponse<T> = {
+  result?: T;
+  error?: CkbRpcError;
+};
+
+async function callCkbRpcForTransaction<T>(method: string, params: unknown[], tx: CKBTransaction, label: string): Promise<T> {
   if (!ckbRpcURL?.trim()) {
-    throw new Error("CKB RPC URL is not configured for broadcasting supply transactions.");
+    throw new Error("CKB RPC URL is not configured for supply transactions.");
   }
 
-  const response = await fetch(ckbRpcURL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      id: Date.now(),
-      jsonrpc: "2.0",
-      method: "send_transaction",
-      params: [toRpcTransaction(tx), "passthrough"],
-    }),
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), CKB_RPC_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(ckbRpcURL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: Date.now(), jsonrpc: "2.0", method, params }),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`${label} timed out after ${CKB_RPC_TIMEOUT_MS / 1000} seconds. No transaction was broadcast.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
   if (!response.ok) {
-    throw new Error(`CKB RPC rejected the transaction with HTTP ${response.status}.`);
+    throw new Error(`${label} failed with HTTP ${response.status} at ${ckbRpcURL}.`);
   }
 
-  const body = (await response.json()) as { result?: string; error?: { message?: string } };
+  const body = (await response.json()) as CkbRpcResponse<T>;
   if (body.error) {
-    throw new Error(body.error.message ?? "CKB RPC rejected the transaction.");
+    throw new Error(formatCkbRpcError(label, body.error, tx));
   }
-  if (!body.result) {
-    throw new Error("CKB RPC did not return a transaction hash.");
+  if (body.result === undefined || body.result === null) {
+    throw new Error(`${label} returned no result from CKB RPC.`);
   }
   return body.result;
+}
+
+function assertRpcTransactionReady(tx: CKBTransaction, action: string) {
+  if (!tx.inputs.length) {
+    throw new Error(`Cannot ${action} a CKB transaction with no inputs.`);
+  }
+  if (!tx.outputs.length) {
+    throw new Error(`Cannot ${action} a CKB transaction with no outputs.`);
+  }
+  if (tx.outputs.length !== tx.outputsData.length) {
+    throw new Error(`Cannot ${action} CKB transaction because outputs and outputsData lengths differ.`);
+  }
+  if (!tx.witnesses.length) {
+    throw new Error(`Cannot ${action} a CKB transaction with no witnesses.`);
+  }
+}
+
+function formatCkbRpcError(label: string, error: CkbRpcError, tx: CKBTransaction) {
+  const message = error.message?.trim() || "CKB RPC rejected the transaction.";
+  const code = error.code === undefined ? "" : ` code=${error.code}.`;
+  const source = rpcSourceHint(message, tx);
+  const data = error.data === undefined ? "" : ` Data: ${shortJson(error.data)}`;
+  return `${label} rejected the transaction:${code} ${message}${source}${data}`;
+}
+
+function rpcSourceHint(message: string, tx: CKBTransaction) {
+  const inputMatch = message.match(/Inputs\[(\d+)\]\.(Lock|Type)/i);
+  if (inputMatch) {
+    const index = Number(inputMatch[1]);
+    const input = tx.inputs[index];
+    if (input) {
+      return ` Source input ${index} ${inputMatch[2]} spends ${input.previousOutput.txHash}#${input.previousOutput.index}.`;
+    }
+  }
+
+  const outputMatch = message.match(/Outputs\[(\d+)\]\.(Lock|Type)/i);
+  if (outputMatch) {
+    const index = Number(outputMatch[1]);
+    const output = tx.outputs[index];
+    if (output) {
+      const script = outputMatch[2].toLowerCase() === "type" ? output.type : output.lock;
+      return script ? ` Source output ${index} ${outputMatch[2]} uses ${script.codeHash}.` : ` Source output ${index} has no type script.`;
+    }
+  }
+
+  return "";
+}
+
+function shortJson(value: unknown) {
+  try {
+    const text = JSON.stringify(value);
+    return text.length > 700 ? `${text.slice(0, 700)}...` : text;
+  } catch {
+    return String(value);
+  }
 }
 
 type RpcScript = {

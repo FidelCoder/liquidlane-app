@@ -440,6 +440,12 @@ function RequestQueue({ requests, busy, canOpen, onOpenFiberChannel, compact = f
               <strong>{assetAmount(request.amount, request.asset)}</strong>
               <span>{request.merchant_name} - {request.duration_days} days</span>
               {request.fiber_peer_pubkey ? <code>Peer: {shortPubkey(request.fiber_peer_pubkey)}</code> : <span>No Fiber peer attached</span>}
+              <code>Request: {shortId(request.request_cell_id)}</code>
+              {request.request_tx_hash ? (
+                <a className="inline-explorer" href={transactionExplorerUrl(request.request_tx_hash)} target="_blank" rel="noreferrer">
+                  Request tx <ExternalLink size={12} />
+                </a>
+              ) : null}
               {request.fiber_error ? <span className="error-text">{request.fiber_error}</span> : null}
             </div>
           </div>

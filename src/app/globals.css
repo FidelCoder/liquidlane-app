@@ -780,6 +780,7 @@ code {
 .tx-receipt-row span { color: var(--muted); }
 .supply-context strong { justify-self: end; }
 .tx-receipt-row a { align-items: center; color: var(--gold); display: inline-flex; gap: 6px; justify-content: flex-end; text-decoration: none; white-space: nowrap; }
+.inline-explorer { align-items: center; color: var(--gold); display: inline-flex; font-size: 0.78rem; font-weight: 800; gap: 5px; letter-spacing: 0; text-decoration: none; width: fit-content; }
 .supply-error {
   background: rgba(242, 139, 130, 0.1);
   border: 1px solid rgba(242, 139, 130, 0.22);
