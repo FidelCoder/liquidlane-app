@@ -18,12 +18,12 @@ const EXPLORER_BASE = process.env.NEXT_PUBLIC_CKB_EXPLORER_URL ?? "https://pudge
 const JOYID_CELL_DEP_TX_HASH = process.env.NEXT_PUBLIC_JOYID_CELL_DEP_TX_HASH;
 const JOYID_CELL_DEP_INDEX = process.env.NEXT_PUBLIC_JOYID_CELL_DEP_INDEX ?? "0x0";
 const JOYID_CELL_DEP_TYPE = process.env.NEXT_PUBLIC_JOYID_CELL_DEP_TYPE;
-const TESTNET_JOYID_CODE_CELL_DEP: CellDep = {
+const TESTNET_JOYID_DEP_GROUP: CellDep = {
   outPoint: {
-    txHash: "0x4a596d31dc35e88fb1591debbf680b04a44b4a434e3a94453c21ea8950ffb4d9",
+    txHash: "0x759f281588c96979764cb21c196478cf8e13ea81fede7f4ba26d1ff29dbc6a81",
     index: "0x0",
   },
-  depType: "code",
+  depType: "depGroup",
 };
 
 type HashType = "type" | "data" | "data1";
@@ -427,7 +427,7 @@ function buildDeploymentTransaction(
 function configuredJoyIdCellDep(): CellDep[] {
   const txHash = JOYID_CELL_DEP_TX_HASH?.trim();
   if (txHash) {
-    const depType = JOYID_CELL_DEP_TYPE ?? "code";
+    const depType = JOYID_CELL_DEP_TYPE ?? "dep_group";
     if (depType !== "dep_group" && depType !== "code") {
       throw new Error("NEXT_PUBLIC_JOYID_CELL_DEP_TYPE must be dep_group or code.");
     }
@@ -442,7 +442,7 @@ function configuredJoyIdCellDep(): CellDep[] {
     ];
   }
 
-  if (ckbNetwork === "testnet") return [TESTNET_JOYID_CODE_CELL_DEP];
+  if (ckbNetwork === "testnet") return [TESTNET_JOYID_DEP_GROUP];
 
   if (JOYID_CELL_DEP_TYPE !== undefined && JOYID_CELL_DEP_TYPE !== "dep_group" && JOYID_CELL_DEP_TYPE !== "code") {
     throw new Error("NEXT_PUBLIC_JOYID_CELL_DEP_TYPE must be dep_group or code.");

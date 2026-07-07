@@ -1,17 +1,17 @@
 import {
   connect,
   getCotaCellDep,
-  getJoyIDLockScript,
   getSubkeyUnlock,
   initConfig,
   openPopup,
   signChallenge as joySignChallenge,
   signRawTransaction as joySignRawTransaction,
+  signTransaction as joySignTransaction,
   type CKBTransaction,
   type ConnectResponseData,
   type SignChallengeResponseData,
 } from "@joyid/ckb";
-import { serializeWitnessArgs } from "@nervosnetwork/ckb-sdk-utils";
+import { addressToScript, serializeWitnessArgs } from "@nervosnetwork/ckb-sdk-utils";
 
 export type CkbLockScript = {
   code_hash: string;
@@ -124,13 +124,50 @@ export async function signRawCkbTransaction(
       throw new Error("JoyID did not return a signed CKB transaction.");
     }
     assertSignedSpendMatches(txToSign, signedTx);
-    assertSignedJoyIdWitness(signedTx, witnessIndexes[0] ?? 0);
-    return signedTx;
+    const normalizedTx = normalizeJoyIdSignedWitness(wallet, signedTx, witnessIndexes[0] ?? 0);
+    assertSignedJoyIdWitness(normalizedTx, witnessIndexes[0] ?? 0);
+    return normalizedTx;
   } catch (error) {
     const message = normalizeJoyIdSigningError(error);
     showJoyIdPopupStatus(popup, "Signing failed", message);
     throw new Error(message);
   }
+}
+
+export async function signJoyIdSdkTransferProbe(
+  wallet: ConnectedCkbWallet,
+  recipientAddress: string,
+  amountCkb: string,
+  popup?: JoyIdPopup,
+): Promise<CKBTransaction> {
+  configureJoyID();
+  showJoyIdPopupStatus(popup, "JoyID SDK probe", "Sign a JoyID-built transfer. LiquidLane will only dry-run it.");
+
+  const signedTx = await awaitJoyIdPopup(
+    joySignTransaction(
+      {
+        from: wallet.ckbAddress,
+        to: recipientAddress,
+        amount: amountCkb,
+      },
+      {
+        name: "LiquidLane",
+        network: ckbNetwork,
+        joyidAppURL,
+        joyidServerURL,
+        rpcURL: ckbRpcURL,
+        popup: popup ?? undefined,
+        timeoutInSeconds: JOYID_SIGN_TIMEOUT_SECONDS,
+      },
+    ),
+    popup,
+    JOYID_SIGN_TIMEOUT_SECONDS,
+    "JoyID SDK transfer signing",
+  );
+  if (!signedTx || !Array.isArray(signedTx.witnesses)) {
+    throw new Error("JoyID SDK did not return a signed CKB transaction.");
+  }
+  return signedTx;
 }
 function awaitJoyIdPopup<T>(promise: Promise<T>, popup: JoyIdPopup | undefined, timeoutSeconds: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -194,9 +231,9 @@ async function prepareJoyIdRawTransaction(
   const preparedTx = cloneTransaction(tx);
   const firstWitnessIndex = witnessIndexes[0] ?? 0;
   preparedTx.witnesses[firstWitnessIndex] ??= serializeWitnessArgs({ lock: "0x", inputType: "0x", outputType: "0x" });
-  await attachJoyIdOutputMetadata(preparedTx, wallet, firstWitnessIndex);
 
-  if (!wallet.joyIdConnection.keyType?.startsWith("sub")) {
+  if (!isJoyIdSubKey(wallet)) {
+    await attachJoyIdOutputMetadata(preparedTx, wallet, firstWitnessIndex);
     return preparedTx;
   }
 
@@ -214,9 +251,10 @@ async function prepareJoyIdRawTransaction(
 }
 
 async function attachJoyIdOutputMetadata(tx: CKBTransaction, wallet: ConnectedCkbWallet, firstWitnessIndex: number) {
+  const userLock = addressToScript(wallet.ckbAddress);
   const joyIdOutputs = tx.outputs
     .map((output, index) => ({ output, index }))
-    .filter(({ output }) => sameScript(output.lock, toJoyScript(wallet.lockScript)));
+    .filter(({ output }) => sameScript(output.lock, userLock));
   if (!joyIdOutputs.length) return;
 
   const credential = await fetchJoyIdCredential(wallet);
@@ -323,8 +361,33 @@ function sameScript(left: { codeHash: string; hashType: string; args: string }, 
     left.args.toLowerCase() === right.args.toLowerCase();
 }
 
-function toJoyScript(script: CkbLockScript) {
-  return { codeHash: script.code_hash, hashType: script.hash_type, args: script.args };
+function isJoyIdSubKey(wallet: ConnectedCkbWallet) {
+  return wallet.joyIdConnection.keyType === "sub_key";
+}
+
+function normalizeJoyIdSignedWitness(_wallet: ConnectedCkbWallet, tx: CKBTransaction, _witnessIndex: number) {
+  return tx;
+}
+
+export function joyIdTxDiagnostics(wallet: ConnectedCkbWallet, tx: CKBTransaction, witnessIndex = 0): string[] {
+  const witness = tx.witnesses[witnessIndex] ?? "0x";
+  const witnessArgs = deserializeWitnessArgsHex(witness);
+  const joyDeps = tx.cellDeps.map((dep) => `${dep.outPoint.txHash}#${dep.outPoint.index}:${dep.depType}`);
+  const lockMode = witnessArgs.lock.length >= 4 ? `0x${witnessArgs.lock.slice(2, 4)}` : "0x";
+  const addressLock = addressToScript(wallet.ckbAddress);
+  const lockArgs = addressLock.args || "0x";
+  return [
+    `JoyID keyType: ${wallet.joyIdConnection.keyType ?? "unknown"}`,
+    `JoyID address lock: ${addressLock.codeHash}:${addressLock.hashType}`,
+    `JoyID lock args prefix: ${lockArgs.slice(0, 10)} (${byteLength(lockArgs)} bytes)`,
+    `Witness index: ${witnessIndex}`,
+    `Witness lock mode: ${lockMode}`,
+    `Witness lock bytes: ${byteLength(witnessArgs.lock)}`,
+    `Witness inputType bytes: ${byteLength(witnessArgs.inputType)}`,
+    `Witness outputType bytes: ${byteLength(witnessArgs.outputType)}`,
+    `Inputs / witnesses: ${tx.inputs.length} / ${tx.witnesses.length}`,
+    `Cell deps: ${joyDeps.join(", ")}`,
+  ];
 }
 
 function assertSignedSpendMatches(unsignedTx: CKBTransaction, signedTx: CKBTransaction) {
@@ -400,6 +463,11 @@ function moleculeBytes(section: string) {
   if (section.length < 8) return "0x";
   const body = section.slice(8);
   return body ? `0x${body}` : "0x";
+}
+
+function byteLength(hex: string) {
+  const clean = strip0x(hex || "0x");
+  return clean.length / 2;
 }
 
 function readLeU32(hex: string) {
@@ -665,7 +733,7 @@ function walletFromConnection(connection: ConnectResponseData): ConnectedCkbWall
   return {
     ckbAddress,
     walletType: "joyid_ckb",
-    lockScript: toBackendScript(getJoyIDLockScript(ckbNetwork === "mainnet")),
+    lockScript: toBackendScript(addressToScript(ckbAddress)),
     joyIdConnection: connection,
   };
 }

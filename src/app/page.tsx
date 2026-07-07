@@ -24,7 +24,7 @@ import { ConsoleApp, type ConsoleView } from "./console";
 import { deployCkbScripts, type DeploymentProgressDetail, type DeploymentResult } from "@/lib/ckbDeployment";
 import { reserveVaultCapacity, type RequestProgressStep } from "@/lib/ckbRequest";
 import { claimVaultFees, withdrawVaultLiquidity, type SettlementProgressStep } from "@/lib/ckbSettlement";
-import { supplyVaultLiquidity, type SupplyProgressStep } from "@/lib/ckbSupply";
+import { probeJoyIdSdkTransfer, probeJoyIdUnlock, supplyVaultLiquidity, type SupplyProgressStep } from "@/lib/ckbSupply";
 import {
   connectCkbWallet,
   openJoyIdPopup,
@@ -268,6 +268,10 @@ export type SupplyTxState = {
   txHash?: string;
   explorerUrl?: string;
   error?: string;
+  diagnostics?: string[];
+  probeStatus?: SupplyTxStatus;
+  probeMessage?: string;
+  probeDiagnostics?: string[];
   updatedAt: string;
 };
 
@@ -547,6 +551,109 @@ export default function Home() {
     });
   }
 
+  function patchSupplyTx(update: Partial<SupplyTxState>) {
+    setSupplyTx((current) => current ? { ...current, ...update, updatedAt: writeTimestamp() } : current);
+  }
+
+  function errorDiagnostics(error: unknown) {
+    if (error && typeof error === "object" && "diagnostics" in error) {
+      const diagnostics = (error as { diagnostics?: unknown }).diagnostics;
+      if (Array.isArray(diagnostics)) return diagnostics.filter((item): item is string => typeof item === "string");
+    }
+    return undefined;
+  }
+
+
+  async function runJoyIdProbe() {
+    if (!wallet) {
+      setStatus("Reconnect JoyID before running the unlock probe.");
+      patchSupplyTx({
+        probeStatus: "failed",
+        probeMessage: "Reconnect JoyID before running the unlock probe.",
+      });
+      return;
+    }
+
+    setBusy("joyid-probe");
+    patchSupplyTx({
+      probeStatus: "running",
+      probeMessage: "Waiting for JoyID to sign a dry-run-only self-change transaction.",
+      probeDiagnostics: undefined,
+    });
+    let popup: JoyIdPopup | undefined;
+    try {
+      popup = openJoyIdPopup();
+      if (!popup) throw new Error("Browser blocked the JoyID popup. Enable popups for localhost and try again.");
+      const result = await probeJoyIdUnlock(wallet, popup);
+      patchSupplyTx({
+        probeStatus: "success",
+        probeMessage: `JoyID unlock probe passed on ${shortId(result.fundingOutPoint)}. The remaining issue is specific to the LiquidLane vault transaction shape.`,
+        probeDiagnostics: result.diagnostics,
+      });
+      setStatus("JoyID unlock probe passed. The funding cell can be unlocked in a minimal dry-run transaction.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "JoyID unlock probe failed.";
+      patchSupplyTx({
+        probeStatus: "failed",
+        probeMessage: message,
+        probeDiagnostics: errorDiagnostics(error),
+      });
+      setStatus(message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function runJoyIdSdkProbe() {
+    if (!wallet) {
+      setStatus("Reconnect JoyID before running the SDK transfer probe.");
+      patchSupplyTx({
+        probeStatus: "failed",
+        probeMessage: "Reconnect JoyID before running the SDK transfer probe.",
+      });
+      return;
+    }
+
+    const recipientAddress = activeVault?.address ?? dashboard?.vault.address;
+    if (!recipientAddress?.trim()) {
+      setStatus("Active vault address is required for the SDK transfer probe.");
+      patchSupplyTx({
+        probeStatus: "failed",
+        probeMessage: "Active vault address is required for the SDK transfer probe.",
+      });
+      return;
+    }
+
+    setBusy("joyid-sdk-probe");
+    patchSupplyTx({
+      probeStatus: "running",
+      probeMessage: "Waiting for JoyID to build and sign a dry-run-only transfer to the active vault address.",
+      probeDiagnostics: undefined,
+    });
+    let popup: JoyIdPopup | undefined;
+    try {
+      popup = openJoyIdPopup();
+      if (!popup) throw new Error("Browser blocked the JoyID popup. Enable popups for localhost and try again.");
+      const result = await probeJoyIdSdkTransfer(wallet, recipientAddress, popup);
+      patchSupplyTx({
+        probeStatus: "success",
+        probeMessage: "JoyID SDK transfer probe passed. LiquidLane raw transaction signing is the remaining area to repair.",
+        probeDiagnostics: result.diagnostics,
+      });
+      setStatus("JoyID SDK transfer probe passed. The next repair should mirror JoyID's signed transaction shape.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "JoyID SDK transfer probe failed.";
+      patchSupplyTx({
+        probeStatus: "failed",
+        probeMessage: message,
+        probeDiagnostics: errorDiagnostics(error),
+      });
+      setStatus(message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function handleDeposit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const formElement = event.currentTarget;
@@ -711,6 +818,7 @@ export default function Home() {
         amount: safeAmount,
         asset,
         error: message,
+        diagnostics: errorDiagnostics(error),
       });
       setStatus(message);
     } finally {
@@ -1267,6 +1375,8 @@ export default function Home() {
         onSignOut={signOut}
         onRefresh={() => refresh()}
         onDeposit={handleDeposit}
+        onProbeJoyIdUnlock={runJoyIdProbe}
+        onProbeJoyIdSdkTransfer={runJoyIdSdkProbe}
         onRequest={handleRequest}
         onOpenFiberChannel={openFiberChannel}
         onWithdrawPosition={withdrawPosition}
@@ -1413,7 +1523,7 @@ export default function Home() {
                 </form>
                 {vaultReady && vault?.address ? <p className="muted compact-note">Active vault <code>{shortAddress(vault.address)}</code></p> : null}
                 {!vaultReady ? <p className="muted compact-note">Vault setup is pending on Core.</p> : null}
-                <SupplyTransactionPanel state={supplyTx} />
+                <SupplyTransactionPanel state={supplyTx} onProbeJoyIdUnlock={runJoyIdProbe} onProbeJoyIdSdkTransfer={runJoyIdSdkProbe} probeBusy={busy === "joyid-probe" || busy === "joyid-sdk-probe"} />
               </article>
             ) : null}
 
@@ -1475,7 +1585,7 @@ export default function Home() {
                     </div>
                     <div className="position-footer">
                       <span className="status-tag" data-status={position.status}>{statusLabel(position.status)}</span>
-                      <code>{shortHash(position.supply_tx_hash)}</code>
+                      <TxMiniLink txHash={position.supply_tx_hash} label="Supply tx" />
                       <button type="button" className="ghost-button small" onClick={() => withdrawPosition(position.id)} disabled={busy === `withdraw-${position.id}` || position.available_amount <= 0}>
                         {busy === `withdraw-${position.id}` ? <Loader2 className="spin" size={14} /> : <ArrowRight size={14} />} Withdraw
                       </button>
@@ -1527,6 +1637,7 @@ export default function Home() {
                           <strong>{withdrawal.lp_name}</strong>
                           <span>Withdrawal · {assetAmount(withdrawal.amount, withdrawal.asset)}</span>
                           <code>{shortId(withdrawal.receipt_cell_id)}</code>
+                          {withdrawal.tx_hash ? <TxMiniLink txHash={withdrawal.tx_hash} label="Withdraw tx" /> : null}
                         </div>
                         <span className="status-tag" data-status={withdrawal.status}>{statusLabel(withdrawal.status)}</span>
                       </div>
@@ -1537,6 +1648,7 @@ export default function Home() {
                           <strong>Fee claim</strong>
                           <span>{assetAmount(claim.amount, claim.asset)}</span>
                           <code>{shortId(claim.position_id)}</code>
+                          {claim.tx_hash ? <TxMiniLink txHash={claim.tx_hash} label="Claim tx" /> : null}
                         </div>
                         <span className="status-tag" data-status={claim.status}>{statusLabel(claim.status)}</span>
                       </div>
@@ -1564,11 +1676,7 @@ export default function Home() {
                       <span>{assetAmount(request.amount, request.asset)} · {request.duration_days} days · fee {assetAmount(request.lease_fee, request.asset)}</span>
                       {request.fiber_peer_pubkey ? <code>{shortPubkey(request.fiber_peer_pubkey)}</code> : <span>No Fiber peer pubkey attached</span>}
                       <code>{shortId(request.request_cell_id)}</code>
-                      {request.request_tx_hash ? (
-                        <a className="inline-explorer" href={transactionExplorerUrl(request.request_tx_hash)} target="_blank" rel="noreferrer">
-                          Request tx <ExternalLink size={12} />
-                        </a>
-                      ) : null}
+                      {request.request_tx_hash ? <TxMiniLink txHash={request.request_tx_hash} label="Request tx" /> : null}
                       {request.fiber_note ? <span>{request.fiber_note}</span> : null}
                       {request.fiber_error ? <span className="error-text">{request.fiber_error}</span> : null}
                     </div>
@@ -1642,7 +1750,7 @@ const supplySteps: { id: SupplyStepId; label: string }[] = [
   { id: "settlement", label: "Receipt" },
 ];
 
-function SupplyTransactionPanel({ state }: { state: SupplyTxState | null }) {
+function SupplyTransactionPanel({ state, onProbeJoyIdUnlock, onProbeJoyIdSdkTransfer, probeBusy = false }: { state: SupplyTxState | null; onProbeJoyIdUnlock?: () => void; onProbeJoyIdSdkTransfer?: () => void; probeBusy?: boolean }) {
   if (!state) return null;
   const activeIndex = supplySteps.findIndex((step) => step.id === state.step);
 
@@ -1671,17 +1779,80 @@ function SupplyTransactionPanel({ state }: { state: SupplyTxState | null }) {
         </div>
       ) : null}
       {state.error ? <p className="supply-error">{state.error}</p> : null}
-      {state.txHash ? (
-        <div className="tx-receipt-row">
-          <span>Transaction</span>
-          <code>{shortHash(state.txHash)}</code>
-          {state.explorerUrl ? <a href={state.explorerUrl} target="_blank" rel="noreferrer"><ExternalLink size={14} /> Explorer</a> : null}
+      {state.diagnostics?.length ? <DiagnosticList title="JoyID transaction diagnostics" items={state.diagnostics} /> : null}
+      {state.status === "failed" && (onProbeJoyIdUnlock || onProbeJoyIdSdkTransfer) ? (
+        <div className="probe-actions">
+          {onProbeJoyIdUnlock ? (
+            <button type="button" className="ghost-button small" onClick={onProbeJoyIdUnlock} disabled={probeBusy}>
+              {probeBusy ? <Loader2 className="spin" size={14} /> : <ShieldCheck size={14} />} Raw unlock probe
+            </button>
+          ) : null}
+          {onProbeJoyIdSdkTransfer ? (
+            <button type="button" className="ghost-button small" onClick={onProbeJoyIdSdkTransfer} disabled={probeBusy}>
+              {probeBusy ? <Loader2 className="spin" size={14} /> : <ShieldCheck size={14} />} SDK transfer probe
+            </button>
+          ) : null}
         </div>
+      ) : null}
+      {state.probeMessage ? (
+        <div className="probe-result" data-status={state.probeStatus ?? "ready"}>
+          <strong>{state.probeStatus === "success" ? "Probe passed" : state.probeStatus === "failed" ? "Probe failed" : "Probe running"}</strong>
+          <span>{state.probeMessage}</span>
+        </div>
+      ) : null}
+      {state.probeDiagnostics?.length ? <DiagnosticList title="Probe diagnostics" items={state.probeDiagnostics} /> : null}
+      {state.txHash ? (
+        <TransactionReceipt txHash={state.txHash} explorerUrl={state.explorerUrl} label="Vault supply" success={state.status === "success"} />
       ) : (
         <p className="muted compact-note">No transaction hash has been broadcast yet.</p>
       )}
     </div>
   );
+}
+
+
+function DiagnosticList({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div className="diagnostic-list">
+      <strong>{title}</strong>
+      {items.map((item) => <code key={item}>{item}</code>)}
+    </div>
+  );
+}
+
+function TransactionReceipt({ txHash, explorerUrl, label, success }: { txHash: string; explorerUrl?: string; label: string; success?: boolean }) {
+  const href = explorerUrl ?? transactionExplorerUrl(txHash);
+  return (
+    <div className="transaction-receipt-card" data-success={success ? "true" : "false"}>
+      <div className="receipt-status-row">
+        <span><CheckCircle2 size={18} /></span>
+        <div>
+          <strong>{success ? "Confirmed on CKB testnet" : "Transaction broadcast"}</strong>
+          <small>{label}</small>
+        </div>
+      </div>
+      <div className="receipt-hash-row">
+        <span>Tx hash</span>
+        <code title={txHash}>{txHash}</code>
+        <button type="button" aria-label="Copy transaction hash" title="Copy transaction hash" onClick={() => copyText(txHash)}><Copy size={14} /></button>
+      </div>
+      <a className="receipt-explorer-link" href={href} target="_blank" rel="noreferrer">
+        View on testnet explorer <ExternalLink size={14} />
+      </a>
+    </div>
+  );
+}
+
+function TxMiniLink({ txHash, label }: { txHash: string; label: string }) {
+  return (
+    <a className="tx-mini-link" href={transactionExplorerUrl(txHash)} target="_blank" rel="noreferrer" title={txHash}>
+      <ExternalLink size={12} /> {label} <code>{shortHash(txHash)}</code>
+    </a>
+  );
+}
+
+function copyText(value: string) {
+  void navigator.clipboard?.writeText(value);
 }
 
 function money(value: number) {

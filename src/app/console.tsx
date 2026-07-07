@@ -64,6 +64,8 @@ export type ConsoleAppProps = {
   onSignOut: () => void;
   onRefresh: () => void | Promise<void>;
   onDeposit: (event: FormEvent<HTMLFormElement>) => void;
+  onProbeJoyIdUnlock: () => void;
+  onProbeJoyIdSdkTransfer: () => void;
   onRequest: (event: FormEvent<HTMLFormElement>) => void;
   onOpenFiberChannel: (id: string) => void;
   onWithdrawPosition: (id: string) => void;
@@ -99,6 +101,8 @@ export function ConsoleApp(props: ConsoleAppProps) {
     onSignOut,
     onRefresh,
     onDeposit,
+    onProbeJoyIdUnlock,
+    onProbeJoyIdSdkTransfer,
     onRequest,
     onOpenFiberChannel,
     onWithdrawPosition,
@@ -171,7 +175,7 @@ export function ConsoleApp(props: ConsoleAppProps) {
           <ActionTransactionPanel state={actionTx} />
 
           {activeView === "lp" ? (
-            <LiquidityProvisionView dashboard={dashboard} utilization={utilization} vaultReady={vaultReady} busy={busy} supplyTx={supplyTx} onDeposit={onDeposit} />
+            <LiquidityProvisionView dashboard={dashboard} utilization={utilization} vaultReady={vaultReady} busy={busy} supplyTx={supplyTx} onDeposit={onDeposit} onProbeJoyIdUnlock={onProbeJoyIdUnlock} onProbeJoyIdSdkTransfer={onProbeJoyIdSdkTransfer} />
           ) : activeView === "merchant" ? (
             <MerchantTerminalView dashboard={dashboard} busy={busy} quote={quote} onRequest={onRequest} onOpenFiberChannel={onOpenFiberChannel} />
           ) : activeView === "operator" ? (
@@ -214,13 +218,15 @@ function ConsoleSidebar({ activeView, status, onViewChange }: { activeView: Cons
   );
 }
 
-function LiquidityProvisionView({ dashboard, utilization, vaultReady, busy, supplyTx, onDeposit }: {
+function LiquidityProvisionView({ dashboard, utilization, vaultReady, busy, supplyTx, onDeposit, onProbeJoyIdUnlock, onProbeJoyIdSdkTransfer }: {
   dashboard: Dashboard;
   utilization: number;
   vaultReady: boolean;
   busy: string | null;
   supplyTx: SupplyTxState | null;
   onDeposit: (event: FormEvent<HTMLFormElement>) => void;
+  onProbeJoyIdUnlock: () => void;
+  onProbeJoyIdSdkTransfer: () => void;
 }) {
   const vault = dashboard.vault;
   return (
@@ -253,7 +259,7 @@ function LiquidityProvisionView({ dashboard, utilization, vaultReady, busy, supp
           <button type="submit" className="gold-button" disabled={busy === "deposit" || !vaultReady}>{busy === "deposit" ? <Loader2 className="spin" size={16} /> : <Banknote size={16} />} Confirm Supply</button>
         </form>
         {vaultReady && vault.address ? <p className="muted compact-note">Active vault <code>{shortAddress(vault.address)}</code></p> : <p className="muted compact-note">Vault setup is pending on Core.</p>}
-        <SupplyTransactionPanel state={supplyTx} />
+        <SupplyTransactionPanel state={supplyTx} onProbeJoyIdUnlock={onProbeJoyIdUnlock} onProbeJoyIdSdkTransfer={onProbeJoyIdSdkTransfer} probeBusy={busy === "joyid-probe" || busy === "joyid-sdk-probe"} />
       </section>
 
       <section className="console-panel reserves-panel">
@@ -466,11 +472,7 @@ function RequestQueue({ requests, busy, canOpen, onOpenFiberChannel, compact = f
               <span>{request.merchant_name} - {request.duration_days} days</span>
               {request.fiber_peer_pubkey ? <code>Peer: {shortPubkey(request.fiber_peer_pubkey)}</code> : <span>No Fiber peer attached</span>}
               <code>Request: {shortId(request.request_cell_id)}</code>
-              {request.request_tx_hash ? (
-                <a className="inline-explorer" href={transactionExplorerUrl(request.request_tx_hash)} target="_blank" rel="noreferrer">
-                  Request tx <ExternalLink size={12} />
-                </a>
-              ) : null}
+              {request.request_tx_hash ? <TxMiniLink txHash={request.request_tx_hash} label="Request tx" /> : null}
               {request.fiber_error ? <span className="error-text">{request.fiber_error}</span> : null}
             </div>
           </div>
@@ -524,7 +526,7 @@ function AccountingPanels({ dashboard, claimableFees, busy, onWithdrawPosition, 
               </div>
               <div className="position-footer">
                 <span className="status-tag" data-status={position.status}>{statusLabel(position.status)}</span>
-                <code>{shortHash(position.supply_tx_hash)}</code>
+                <TxMiniLink txHash={position.supply_tx_hash} label="Supply tx" />
                 <button type="button" className="ghost-button small" onClick={() => onWithdrawPosition(position.id)} disabled={busy === `withdraw-${position.id}` || position.available_amount <= 0}>
                   {busy === `withdraw-${position.id}` ? <Loader2 className="spin" size={14} /> : <ArrowRight size={14} />} Withdraw
                 </button>
@@ -590,7 +592,7 @@ const supplySteps: { id: SupplyStepId; label: string }[] = [
   { id: "settlement", label: "Receipt" },
 ];
 
-function SupplyTransactionPanel({ state }: { state: SupplyTxState | null }) {
+function SupplyTransactionPanel({ state, onProbeJoyIdUnlock, onProbeJoyIdSdkTransfer, probeBusy = false }: { state: SupplyTxState | null; onProbeJoyIdUnlock?: () => void; onProbeJoyIdSdkTransfer?: () => void; probeBusy?: boolean }) {
   if (!state) return null;
   const activeIndex = supplySteps.findIndex((step) => step.id === state.step);
 
@@ -619,12 +621,30 @@ function SupplyTransactionPanel({ state }: { state: SupplyTxState | null }) {
         </div>
       ) : null}
       {state.error ? <p className="supply-error">{state.error}</p> : null}
-      {state.txHash ? (
-        <div className="tx-receipt-row">
-          <span>Transaction</span>
-          <code>{shortHash(state.txHash)}</code>
-          {state.explorerUrl ? <a href={state.explorerUrl} target="_blank" rel="noreferrer"><ExternalLink size={14} /> Explorer</a> : null}
+      {state.diagnostics?.length ? <DiagnosticList title="JoyID transaction diagnostics" items={state.diagnostics} /> : null}
+      {state.status === "failed" && (onProbeJoyIdUnlock || onProbeJoyIdSdkTransfer) ? (
+        <div className="probe-actions">
+          {onProbeJoyIdUnlock ? (
+            <button type="button" className="ghost-button small" onClick={onProbeJoyIdUnlock} disabled={probeBusy}>
+              {probeBusy ? <Loader2 className="spin" size={14} /> : <HelpCircle size={14} />} Raw unlock probe
+            </button>
+          ) : null}
+          {onProbeJoyIdSdkTransfer ? (
+            <button type="button" className="ghost-button small" onClick={onProbeJoyIdSdkTransfer} disabled={probeBusy}>
+              {probeBusy ? <Loader2 className="spin" size={14} /> : <HelpCircle size={14} />} SDK transfer probe
+            </button>
+          ) : null}
         </div>
+      ) : null}
+      {state.probeMessage ? (
+        <div className="probe-result" data-status={state.probeStatus ?? "ready"}>
+          <strong>{state.probeStatus === "success" ? "Probe passed" : state.probeStatus === "failed" ? "Probe failed" : "Probe running"}</strong>
+          <span>{state.probeMessage}</span>
+        </div>
+      ) : null}
+      {state.probeDiagnostics?.length ? <DiagnosticList title="Probe diagnostics" items={state.probeDiagnostics} /> : null}
+      {state.txHash ? (
+        <TransactionReceipt txHash={state.txHash} explorerUrl={state.explorerUrl} label="Vault supply" success={state.status === "success"} />
       ) : (
         <p className="muted compact-note">No transaction hash has been broadcast yet.</p>
       )}
@@ -667,16 +687,57 @@ function ActionTransactionPanel({ state }: { state: ActionTxState | null }) {
       ) : null}
       {state.error ? <p className="supply-error">{state.error}</p> : null}
       {state.txHash ? (
-        <div className="tx-receipt-row">
-          <span>Transaction</span>
-          <code>{shortHash(state.txHash)}</code>
-          {state.explorerUrl ? <a href={state.explorerUrl} target="_blank" rel="noreferrer"><ExternalLink size={14} /> Explorer</a> : null}
-        </div>
+        <TransactionReceipt txHash={state.txHash} explorerUrl={state.explorerUrl} label={actionLabel} success={state.status === "success"} />
       ) : (
         <p className="muted compact-note">No CKB transaction hash has been broadcast for this action yet.</p>
       )}
     </div>
   );
+}
+
+
+function DiagnosticList({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div className="diagnostic-list">
+      <strong>{title}</strong>
+      {items.map((item) => <code key={item}>{item}</code>)}
+    </div>
+  );
+}
+
+function TransactionReceipt({ txHash, explorerUrl, label, success }: { txHash: string; explorerUrl?: string; label: string; success?: boolean }) {
+  const href = explorerUrl ?? transactionExplorerUrl(txHash);
+  return (
+    <div className="transaction-receipt-card" data-success={success ? "true" : "false"}>
+      <div className="receipt-status-row">
+        <span><CheckCircle2 size={18} /></span>
+        <div>
+          <strong>{success ? "Confirmed on CKB testnet" : "Transaction broadcast"}</strong>
+          <small>{label}</small>
+        </div>
+      </div>
+      <div className="receipt-hash-row">
+        <span>Tx hash</span>
+        <code title={txHash}>{txHash}</code>
+        <button type="button" aria-label="Copy transaction hash" title="Copy transaction hash" onClick={() => copyText(txHash)}><Copy size={14} /></button>
+      </div>
+      <a className="receipt-explorer-link" href={href} target="_blank" rel="noreferrer">
+        View on testnet explorer <ExternalLink size={14} />
+      </a>
+    </div>
+  );
+}
+
+function TxMiniLink({ txHash, label }: { txHash: string; label: string }) {
+  return (
+    <a className="tx-mini-link" href={transactionExplorerUrl(txHash)} target="_blank" rel="noreferrer" title={txHash}>
+      <ExternalLink size={12} /> {label} <code>{shortHash(txHash)}</code>
+    </a>
+  );
+}
+
+function copyText(value: string) {
+  void navigator.clipboard?.writeText(value);
 }
 
 function Metric({ label, value }: { label: string; value: string }) {

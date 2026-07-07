@@ -5,6 +5,8 @@ import {
   dryRunCkbTransaction,
   ckbNetwork,
   ckbRpcURL,
+  joyIdTxDiagnostics,
+  signJoyIdSdkTransferProbe,
   showJoyIdPopupStatus,
   signRawCkbTransaction,
   type ConnectedCkbWallet,
@@ -20,12 +22,12 @@ const CELL_CAPACITY_PAD = BigInt(2) * SHANNONS_PER_CKB;
 const JOYID_CELL_DEP_TX_HASH = process.env.NEXT_PUBLIC_JOYID_CELL_DEP_TX_HASH;
 const JOYID_CELL_DEP_INDEX = process.env.NEXT_PUBLIC_JOYID_CELL_DEP_INDEX ?? "0x0";
 const JOYID_CELL_DEP_TYPE = process.env.NEXT_PUBLIC_JOYID_CELL_DEP_TYPE;
-const TESTNET_JOYID_CODE_CELL_DEP: CellDep = {
+const TESTNET_JOYID_DEP_GROUP: CellDep = {
   outPoint: {
-    txHash: "0x4a596d31dc35e88fb1591debbf680b04a44b4a434e3a94453c21ea8950ffb4d9",
+    txHash: "0x759f281588c96979764cb21c196478cf8e13ea81fede7f4ba26d1ff29dbc6a81",
     index: "0x0",
   },
-  depType: "code",
+  depType: "depGroup",
 };
 
 type HashType = "type" | "data" | "data1";
@@ -115,6 +117,16 @@ export type SupplyVaultResult = {
   txHash: string;
 };
 
+export type JoyIdUnlockProbeResult = {
+  fundingOutPoint: string;
+  diagnostics: string[];
+};
+
+export type JoyIdSdkTransferProbeResult = {
+  txHash: string | null;
+  diagnostics: string[];
+};
+
 export type SupplyProgressStep = "vault" | "funding" | "signing" | "verify" | "broadcast";
 
 export async function supplyVaultLiquidity(
@@ -165,12 +177,75 @@ export async function supplyVaultLiquidity(
   const signedTx = await signRawCkbTransaction(wallet, unsignedTx, [0], popup);
   assertJoyIdSignedWitness(unsignedTx, signedTx, [0]);
 
+  const diagnostics = joyIdTxDiagnostics(wallet, signedTx, 0);
   reportProgress(options, popup, "verify", "Dry-running the signed vault update before broadcast.");
-  await dryRunCkbTransaction(signedTx);
+  try {
+    await dryRunCkbTransaction(signedTx);
+  } catch (error) {
+    throw attachDiagnostics(error, diagnostics);
+  }
 
   reportProgress(options, popup, "broadcast", "Broadcasting the verified vault update to CKB testnet.");
   const txHash = await broadcastCkbTransaction(signedTx);
   return { tx: { ...signedTx, hash: txHash }, txHash };
+}
+
+
+export async function probeJoyIdUnlock(wallet: ConnectedCkbWallet, popup?: JoyIdPopup): Promise<JoyIdUnlockProbeResult> {
+  const userLock = toJoyScript(addressToScript(wallet.ckbAddress));
+  const minChangeCapacity = occupiedCapacity(userLock, null, 0) + CELL_CAPACITY_PAD;
+  const funding = selectLargestFunding(await collectFundingCells(userLock), minChangeCapacity + FEE_MARGIN);
+  const changeCapacity = funding.total - FEE_MARGIN;
+  if (changeCapacity < minChangeCapacity) {
+    throw new Error("JoyID probe funding cell does not leave enough change after fees.");
+  }
+
+  showJoyIdPopupStatus(popup, "JoyID unlock probe", "Sign a dry-run-only self-change transaction. No CKB will be broadcast.");
+  const unsignedTx: CKBTransaction = {
+    version: "0x0",
+    cellDeps: [...configuredJoyIdCellDep()],
+    headerDeps: [],
+    inputs: funding.inputs,
+    outputs: [{ capacity: toHex(changeCapacity), lock: userLock }],
+    outputsData: ["0x"],
+    witnesses: [emptyWitness(), ...funding.inputs.slice(1).map(() => "0x")],
+  };
+  const signedTx = await signRawCkbTransaction(wallet, unsignedTx, [0], popup);
+  const diagnostics = [
+    `Probe input: ${signedTx.inputs[0]?.previousOutput.txHash}#${signedTx.inputs[0]?.previousOutput.index}`,
+    ...joyIdTxDiagnostics(wallet, signedTx, 0),
+  ];
+
+  try {
+    await dryRunCkbTransaction(signedTx);
+  } catch (error) {
+    throw attachDiagnostics(error, diagnostics);
+  }
+
+  return {
+    fundingOutPoint: `${signedTx.inputs[0]?.previousOutput.txHash}#${signedTx.inputs[0]?.previousOutput.index}`,
+    diagnostics,
+  };
+}
+
+export async function probeJoyIdSdkTransfer(wallet: ConnectedCkbWallet, recipientAddress: string, popup?: JoyIdPopup): Promise<JoyIdSdkTransferProbeResult> {
+  const signedTx = await signJoyIdSdkTransferProbe(wallet, recipientAddress, "25000000000", popup);
+  const diagnostics = [
+    "Probe type: JoyID SDK signTransaction dry-run transfer",
+    `Probe recipient: ${recipientAddress}`,
+    ...joyIdTxDiagnostics(wallet, signedTx, 0),
+  ];
+
+  try {
+    await dryRunCkbTransaction(signedTx);
+  } catch (error) {
+    throw attachDiagnostics(error, diagnostics);
+  }
+
+  return {
+    txHash: signedTx.hash ?? null,
+    diagnostics,
+  };
 }
 
 function buildSupplyTransaction(input: {
@@ -270,6 +345,19 @@ async function collectFundingCells(lock: JoyScript): Promise<FundingCell[]> {
     cursor = result.last_cursor;
   }
   return cells.sort((left, right) => compareBigInt(left.capacity, right.capacity));
+}
+
+
+function selectLargestFunding(cells: FundingCell[], required: bigint) {
+  const eligible = cells.filter((cell) => cell.capacity >= required);
+  const largest = eligible.reduce<FundingCell | null>((max, cell) => !max || cell.capacity > max.capacity ? cell : max, null);
+  if (largest) {
+    return {
+      inputs: [{ previousOutput: largest.previousOutput, since: largest.since }],
+      total: largest.capacity,
+    };
+  }
+  return selectFunding(cells, required);
 }
 
 function selectFunding(cells: FundingCell[], required: bigint) {
@@ -381,11 +469,11 @@ function occupiedCapacity(lock: JoyScript, type: JoyScript | null, dataLength: n
 function configuredJoyIdCellDep(): CellDep[] {
   const txHash = JOYID_CELL_DEP_TX_HASH?.trim();
   if (txHash) {
-    const depType = JOYID_CELL_DEP_TYPE ?? "code";
+    const depType = JOYID_CELL_DEP_TYPE ?? "dep_group";
     if (depType !== "dep_group" && depType !== "code") throw new Error("NEXT_PUBLIC_JOYID_CELL_DEP_TYPE must be dep_group or code.");
     return [{ outPoint: { txHash, index: JOYID_CELL_DEP_INDEX }, depType: depType === "dep_group" ? "depGroup" : "code" }];
   }
-  if (ckbNetwork === "testnet") return [TESTNET_JOYID_CODE_CELL_DEP];
+  if (ckbNetwork === "testnet") return [TESTNET_JOYID_DEP_GROUP];
   return [];
 }
 
@@ -435,6 +523,13 @@ function assertJoyIdSignedWitness(unsignedTx: CKBTransaction, signedTx: CKBTrans
   if (!signed) {
     throw new Error("JoyID returned without a CKB signature. No vault supply transaction was broadcast.");
   }
+}
+
+
+function attachDiagnostics(error: unknown, diagnostics: string[]) {
+  const wrapped = new Error(error instanceof Error ? error.message : String(error || "CKB transaction failed."));
+  (wrapped as Error & { diagnostics?: string[] }).diagnostics = diagnostics;
+  return wrapped;
 }
 
 function reportProgress(options: SupplyVaultOptions, popup: JoyIdPopup | undefined, step: SupplyProgressStep, message: string) {
