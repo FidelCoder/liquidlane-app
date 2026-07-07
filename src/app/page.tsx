@@ -23,6 +23,7 @@ import {
 import { ConsoleApp, type ConsoleView } from "./console";
 import { deployCkbScripts, type DeploymentProgressDetail, type DeploymentResult } from "@/lib/ckbDeployment";
 import { reserveVaultCapacity, type RequestProgressStep } from "@/lib/ckbRequest";
+import { claimVaultFees, withdrawVaultLiquidity, type SettlementProgressStep } from "@/lib/ckbSettlement";
 import { supplyVaultLiquidity, type SupplyProgressStep } from "@/lib/ckbSupply";
 import {
   connectCkbWallet,
@@ -124,6 +125,7 @@ export type LpPosition = {
   fees_earned: number;
   fees_claimed: number;
   receipt_cell_id: string;
+  receipt_cell_out_point: string | null;
   supply_tx_hash: string;
   status: PositionStatus;
   created_at: string;
@@ -269,7 +271,23 @@ export type SupplyTxState = {
   updatedAt: string;
 };
 
+export type ActionTxStatus = "running" | "ready" | "success" | "failed";
+
+export type ActionTxState = {
+  status: ActionTxStatus;
+  title: string;
+  message: string;
+  action: "request" | "withdraw" | "claim" | "fiber";
+  amount?: number;
+  asset?: string;
+  txHash?: string;
+  explorerUrl?: string;
+  error?: string;
+  updatedAt: string;
+};
+
 type SupplyTxUpdate = Omit<SupplyTxState, "updatedAt">;
+type ActionTxUpdate = Omit<ActionTxState, "updatedAt">;
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:18080";
 const DEFAULT_ASSET = "CKB";
@@ -319,7 +337,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [supplyTx, setSupplyTx] = useState<SupplyTxState | null>(null);
-
+  const [actionTx, setActionTx] = useState<ActionTxState | null>(null);
 
   const loadVault = useCallback(async function loadVault() {
     try {
@@ -493,6 +511,7 @@ export default function Home() {
     setDeployment(null);
     setDeploymentNotice(null);
     setSupplyTx(null);
+    setActionTx(null);
     setCopiedWalletAddress(false);
     setSelectedRole(null);
     setActiveView("lp");
@@ -510,10 +529,21 @@ export default function Home() {
     }
   }
 
+  function writeTimestamp() {
+    return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  }
+
   function writeSupplyTx(update: SupplyTxUpdate) {
     setSupplyTx({
       ...update,
-      updatedAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+      updatedAt: writeTimestamp(),
+    });
+  }
+
+  function writeActionTx(update: ActionTxUpdate) {
+    setActionTx({
+      ...update,
+      updatedAt: writeTimestamp(),
     });
   }
 
@@ -695,6 +725,7 @@ export default function Home() {
     const amount = Number(form.get("amount"));
     const durationDays = Number(form.get("duration_days"));
     const asset = String(form.get("asset") ?? DEFAULT_ASSET).trim().toUpperCase();
+    const safeAmount = Number.isFinite(amount) ? amount : undefined;
     const payload = {
       asset,
       amount,
@@ -710,6 +741,14 @@ export default function Home() {
     };
 
     setBusy("request");
+    writeActionTx({
+      status: "running",
+      action: "request",
+      title: "Preparing capacity request",
+      message: "Validating the request and checking the active vault.",
+      amount: safeAmount,
+      asset,
+    });
     let signPopup: JoyIdPopup | undefined;
     try {
       if (!Number.isFinite(amount) || amount <= 0) {
@@ -728,6 +767,14 @@ export default function Home() {
         if (!popup) {
           throw new Error("Browser blocked the JoyID popup. Enable popups for localhost and try again.");
         }
+        writeActionTx({
+          status: "running",
+          action: "request",
+          title: "Reconnect signer",
+          message: "JoyID needs to reconnect before LiquidLane can sign the request cell.",
+          amount,
+          asset,
+        });
         setStatus("Opening JoyID to reconnect your signer.");
         activeWallet = await connectCkbWallet(popup);
         if (dashboard?.user.ckb_address && activeWallet.ckbAddress !== dashboard.user.ckb_address) {
@@ -736,6 +783,14 @@ export default function Home() {
         setWallet(activeWallet);
         setCkbAddress(activeWallet.ckbAddress);
         window.localStorage.setItem(ADDRESS_KEY, activeWallet.ckbAddress);
+        writeActionTx({
+          status: "ready",
+          action: "request",
+          title: "Signer reconnected",
+          message: "Click Quote + reserve again to sign and broadcast the request cell.",
+          amount,
+          asset,
+        });
         setStatus("JoyID reconnected. Click Request capacity again to sign the request transaction.");
         return;
       }
@@ -746,6 +801,14 @@ export default function Home() {
       }
 
       showJoyIdPopupStatus(signPopup, "Preparing request", "LiquidLane is checking live vault liquidity.");
+      writeActionTx({
+        status: "running",
+        action: "request",
+        title: "Checking vault liquidity",
+        message: "Loading the live vault cell and available CKB capacity.",
+        amount,
+        asset,
+      });
       setStatus("Checking live vault liquidity.");
       const requestVault = await loadVault();
       if (!requestVault?.configured || !requestVault.address?.trim()) {
@@ -758,12 +821,30 @@ export default function Home() {
       });
       setQuote(quoteData);
       if (!quoteData.available) {
-        setStatus(`Only ${assetAmount(quoteData.available_liquidity, quoteData.asset)} is available.`);
+        const message = `Only ${assetAmount(quoteData.available_liquidity, quoteData.asset)} is available.`;
+        setStatus(message);
+        writeActionTx({
+          status: "failed",
+          action: "request",
+          title: "Capacity unavailable",
+          message,
+          amount,
+          asset,
+          error: "Supply more vault liquidity or request a smaller amount.",
+        });
         showJoyIdPopupStatus(signPopup, "Request unavailable", "The vault does not have enough available capacity.");
         return;
       }
 
       showJoyIdPopupStatus(signPopup, "Preparing request", "Core is creating your capacity request intent.");
+      writeActionTx({
+        status: "running",
+        action: "request",
+        title: "Creating request intent",
+        message: "Core is preparing the request cell and lease-fee movement.",
+        amount,
+        asset,
+      });
       setStatus("Creating the capacity request intent.");
       const intent = await request<RequestIntent>("/liquidity/request/intents", {
         method: "POST",
@@ -776,10 +857,29 @@ export default function Home() {
         asset,
         amount,
         onProgress(step, message) {
+          writeActionTx({
+            status: "running",
+            action: "request",
+            title: progressTitle[step],
+            message,
+            amount,
+            asset,
+          });
           setStatus(`${progressTitle[step]}: ${message}`);
         },
       }, signPopup);
 
+      const explorerUrl = transactionExplorerUrl(signed.txHash);
+      writeActionTx({
+        status: "running",
+        action: "request",
+        title: "Recording request cell",
+        message: "CKB RPC accepted the transaction. Core is verifying the request cell.",
+        amount,
+        asset,
+        txHash: signed.txHash,
+        explorerUrl,
+      });
       showJoyIdPopupStatus(signPopup, "Recording request", "Core is verifying the request cell transaction.");
       await request<LiquidityRequest>("/liquidity/requests", {
         method: "POST",
@@ -792,11 +892,234 @@ export default function Home() {
         }),
       });
       formElement.reset();
+      writeActionTx({
+        status: "success",
+        action: "request",
+        title: "Capacity request submitted",
+        message: `${assetAmount(amount, asset)} was reserved and the request cell is now tracked by Core.`,
+        amount,
+        asset,
+        txHash: signed.txHash,
+        explorerUrl,
+      });
       setStatus(`Capacity request broadcast ${shortHash(signed.txHash)} and reserved on LiquidLane.`);
       await refresh();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Capacity request failed.";
       showJoyIdPopupStatus(signPopup, "Request failed", message);
+      writeActionTx({
+        status: "failed",
+        action: "request",
+        title: "Capacity request did not broadcast",
+        message: "No request cell was accepted unless this panel shows a transaction hash.",
+        amount: safeAmount,
+        asset,
+        error: message,
+      });
+      setStatus(message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+
+  async function activeSigningWallet(action: string, popup?: JoyIdPopup) {
+    let activeWallet = wallet;
+    if (!activeWallet) {
+      const connectPopup = popup ?? openJoyIdPopup();
+      if (!connectPopup) throw new Error("Browser blocked the JoyID popup. Enable popups for localhost and try again.");
+      setStatus(`Opening JoyID to reconnect your signer for ${action}.`);
+      activeWallet = await connectCkbWallet(connectPopup);
+      if (dashboard?.user.ckb_address && activeWallet.ckbAddress !== dashboard.user.ckb_address) {
+        throw new Error("Connected wallet does not match this LiquidLane session.");
+      }
+      setWallet(activeWallet);
+      setCkbAddress(activeWallet.ckbAddress);
+      window.localStorage.setItem(ADDRESS_KEY, activeWallet.ckbAddress);
+    }
+    return activeWallet;
+  }
+
+  async function withdrawPosition(positionId: string) {
+    const position = dashboard?.positions.find((item) => item.id === positionId);
+    if (!position) return setStatus("LP position was not found.");
+    if (position.available_amount <= 0) return setStatus("This LP position has no available liquidity to withdraw.");
+    const amount = position.available_amount;
+    const asset = position.asset;
+    setBusy(`withdraw-${positionId}`);
+    writeActionTx({
+      status: "running",
+      action: "withdraw",
+      title: "Preparing withdrawal",
+      message: "Core is creating a withdrawal intent for the available LP receipt balance.",
+      amount,
+      asset,
+    });
+    let popup: JoyIdPopup | undefined;
+    try {
+      popup = openJoyIdPopup();
+      if (!popup) throw new Error("Browser blocked the JoyID popup. Enable popups for localhost and try again.");
+      const activeWallet = await activeSigningWallet("withdrawal", popup);
+      const vault = await loadVault();
+      if (!vault?.configured || !vault.address?.trim()) throw new Error("LiquidLane vault is not configured yet.");
+      showJoyIdPopupStatus(popup, "Preparing withdrawal", "Core is creating your withdrawal intent.");
+      const intent = await request<WithdrawalIntent>("/vault/withdrawals/intents", {
+        method: "POST",
+        body: JSON.stringify({ position_id: position.id, amount }),
+      });
+      const signed = await withdrawVaultLiquidity(activeWallet, {
+        vault,
+        position,
+        intent,
+        amount: intent.amount,
+        onProgress(step: SettlementProgressStep, message: string) {
+          writeActionTx({
+            status: "running",
+            action: "withdraw",
+            title: settlementStepLabel(step),
+            message,
+            amount,
+            asset,
+          });
+          setStatus(`${settlementStepLabel(step)}: ${message}`);
+        },
+      }, popup);
+      const explorerUrl = transactionExplorerUrl(signed.txHash);
+      writeActionTx({
+        status: "running",
+        action: "withdraw",
+        title: "Recording withdrawal",
+        message: "CKB RPC accepted the transaction. Core is verifying the receipt settlement.",
+        amount,
+        asset,
+        txHash: signed.txHash,
+        explorerUrl,
+      });
+      await request<WithdrawalIntent>(`/vault/withdrawals/${intent.id}/settle`, {
+        method: "POST",
+        body: JSON.stringify({
+          tx_hash: signed.txHash,
+          receipt_cell_out_point: signed.receiptCellOutPoint,
+          signed_tx: signed.tx,
+        }),
+      });
+      writeActionTx({
+        status: "success",
+        action: "withdraw",
+        title: "Withdrawal submitted",
+        message: `${assetAmount(amount, asset)} was broadcast back to your wallet and settled in Core.`,
+        amount,
+        asset,
+        txHash: signed.txHash,
+        explorerUrl,
+      });
+      setStatus(`Withdrawal broadcast ${shortHash(signed.txHash)} and settled in Core.`);
+      await refresh();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Withdrawal failed.";
+      showJoyIdPopupStatus(popup, "Withdrawal failed", message);
+      writeActionTx({
+        status: "failed",
+        action: "withdraw",
+        title: "Withdrawal did not broadcast",
+        message: "No withdrawal was accepted unless this panel shows a transaction hash.",
+        amount,
+        asset,
+        error: message,
+      });
+      setStatus(message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function claimFees(positionId: string) {
+    const position = dashboard?.positions.find((item) => item.id === positionId);
+    if (!position) return setStatus("LP position was not found.");
+    const amount = Math.max(position.fees_earned - position.fees_claimed, 0);
+    const asset = position.asset;
+    if (amount <= 0) return setStatus("This LP position has no claimable fees.");
+    setBusy(`claim-${positionId}`);
+    writeActionTx({
+      status: "running",
+      action: "claim",
+      title: "Preparing fee claim",
+      message: "Core is creating a claim intent for earned LP fees.",
+      amount,
+      asset,
+    });
+    let popup: JoyIdPopup | undefined;
+    try {
+      popup = openJoyIdPopup();
+      if (!popup) throw new Error("Browser blocked the JoyID popup. Enable popups for localhost and try again.");
+      const activeWallet = await activeSigningWallet("fee claim", popup);
+      const vault = await loadVault();
+      if (!vault?.configured || !vault.address?.trim()) throw new Error("LiquidLane vault is not configured yet.");
+      showJoyIdPopupStatus(popup, "Preparing fee claim", "Core is creating your fee claim intent.");
+      const claim = await request<FeeClaim>("/vault/fees/claims", {
+        method: "POST",
+        body: JSON.stringify({ position_id: position.id, amount }),
+      });
+      const signed = await claimVaultFees(activeWallet, {
+        vault,
+        position,
+        claim,
+        amount: claim.amount,
+        onProgress(step: SettlementProgressStep, message: string) {
+          writeActionTx({
+            status: "running",
+            action: "claim",
+            title: settlementStepLabel(step),
+            message,
+            amount,
+            asset,
+          });
+          setStatus(`${settlementStepLabel(step)}: ${message}`);
+        },
+      }, popup);
+      const explorerUrl = transactionExplorerUrl(signed.txHash);
+      writeActionTx({
+        status: "running",
+        action: "claim",
+        title: "Recording fee claim",
+        message: "CKB RPC accepted the transaction. Core is verifying the fee-claim cell.",
+        amount,
+        asset,
+        txHash: signed.txHash,
+        explorerUrl,
+      });
+      await request<FeeClaim>(`/vault/fees/claims/${claim.id}/settle`, {
+        method: "POST",
+        body: JSON.stringify({
+          tx_hash: signed.txHash,
+          receipt_cell_out_point: signed.receiptCellOutPoint,
+          signed_tx: signed.tx,
+        }),
+      });
+      writeActionTx({
+        status: "success",
+        action: "claim",
+        title: "Fee claim submitted",
+        message: `${assetAmount(amount, asset)} in earned fees was broadcast and settled in Core.`,
+        amount,
+        asset,
+        txHash: signed.txHash,
+        explorerUrl,
+      });
+      setStatus(`Fee claim broadcast ${shortHash(signed.txHash)} and settled in Core.`);
+      await refresh();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Fee claim failed.";
+      showJoyIdPopupStatus(popup, "Fee claim failed", message);
+      writeActionTx({
+        status: "failed",
+        action: "claim",
+        title: "Fee claim did not broadcast",
+        message: "No claim was accepted unless this panel shows a transaction hash.",
+        amount,
+        asset,
+        error: message,
+      });
       setStatus(message);
     } finally {
       setBusy(null);
@@ -804,13 +1127,41 @@ export default function Home() {
   }
 
   async function openFiberChannel(id: string) {
+    const requestItem = dashboard?.liquidity_requests.find((item) => item.id === id);
     setBusy(id);
+    writeActionTx({
+      status: "running",
+      action: "fiber",
+      title: "Opening Fiber channel",
+      message: "Core is submitting the reserved request to the configured Fiber RPC endpoint.",
+      amount: requestItem?.amount,
+      asset: requestItem?.asset ?? DEFAULT_ASSET,
+    });
     try {
       const updated = await request<LiquidityRequest>(`/liquidity/requests/${id}/deploy`, { method: "POST" });
-      setStatus(statusMessage(updated));
+      const message = statusMessage(updated);
+      writeActionTx({
+        status: "success",
+        action: "fiber",
+        title: updated.status === "channel_open" ? "Fiber channel opened" : "Fiber handoff recorded",
+        message,
+        amount: updated.amount,
+        asset: updated.asset,
+      });
+      setStatus(message);
       await refresh();
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Fiber channel open failed.");
+      const message = error instanceof Error ? error.message : "Fiber channel open failed.";
+      writeActionTx({
+        status: "failed",
+        action: "fiber",
+        title: "Fiber channel open failed",
+        message: "Core did not open the channel. Check Fiber RPC configuration and the peer pubkey.",
+        amount: requestItem?.amount,
+        asset: requestItem?.asset ?? DEFAULT_ASSET,
+        error: message,
+      });
+      setStatus(message);
     } finally {
       setBusy(null);
     }
@@ -900,6 +1251,7 @@ export default function Home() {
         copiedWalletAddress={copiedWalletAddress}
         quote={quote}
         supplyTx={supplyTx}
+        actionTx={actionTx}
         vaultReady={vaultReady}
         utilization={utilization}
         claimableFees={claimableFees}
@@ -917,6 +1269,8 @@ export default function Home() {
         onDeposit={handleDeposit}
         onRequest={handleRequest}
         onOpenFiberChannel={openFiberChannel}
+        onWithdrawPosition={withdrawPosition}
+        onClaimFees={claimFees}
       />
     );
   }
@@ -1122,6 +1476,12 @@ export default function Home() {
                     <div className="position-footer">
                       <span className="status-tag" data-status={position.status}>{statusLabel(position.status)}</span>
                       <code>{shortHash(position.supply_tx_hash)}</code>
+                      <button type="button" className="ghost-button small" onClick={() => withdrawPosition(position.id)} disabled={busy === `withdraw-${position.id}` || position.available_amount <= 0}>
+                        {busy === `withdraw-${position.id}` ? <Loader2 className="spin" size={14} /> : <ArrowRight size={14} />} Withdraw
+                      </button>
+                      <button type="button" className="ghost-button small" onClick={() => claimFees(position.id)} disabled={busy === `claim-${position.id}` || Math.max(position.fees_earned - position.fees_claimed, 0) <= 0}>
+                        {busy === `claim-${position.id}` ? <Loader2 className="spin" size={14} /> : <Banknote size={14} />} Claim
+                      </button>
                     </div>
                   </div>
                 )) : <EmptyState title="No LP positions" text="Supply liquidity to create a receipt-backed vault position." />}
@@ -1238,7 +1598,7 @@ export default function Home() {
                     <span><Landmark size={16} /></span>
                     <p>{event.label}<strong>{event.amount ? ` ${assetAmount(event.amount, event.asset ?? DEFAULT_ASSET)}` : ""}</strong></p>
                   </div>
-                )) : <EmptyState title="No activity yet" text="Actions you take in the product will appear here." />}
+                )) : <EmptyState title="No activity yet" text="Confirmed Core events will appear after vault or Fiber operations settle." />}
               </div>
             </div>
           </section>
@@ -1392,6 +1752,15 @@ function deploymentStepMessage(step: "package" | "funding" | "signing" | "broadc
   if (step === "funding") return "Planning single-input JoyID deployment transactions.";
   if (step === "signing") return `Confirm CKB script deployment${counter} in JoyID.`;
   return `Broadcasting CKB script deployment${counter} to testnet.`;
+}
+
+function settlementStepLabel(step: SettlementProgressStep) {
+  if (step === "vault") return "Checking vault";
+  if (step === "receipt") return "Checking LP receipt";
+  if (step === "funding") return "Selecting wallet cells";
+  if (step === "signing") return "Waiting for JoyID";
+  if (step === "verify") return "Dry-running settlement";
+  return "Broadcasting settlement";
 }
 
 function statusMessage(request: LiquidityRequest) {

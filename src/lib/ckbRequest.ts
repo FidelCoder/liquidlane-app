@@ -153,7 +153,7 @@ export async function reserveVaultCapacity(
   const requestType = buildRequestType(userLock, operatorLock, vaultCell.type, scripts, options.intent.id);
   const requestCapacity = occupiedCapacity(userLock, requestType, REQUEST_DATA_LEN) + CELL_CAPACITY_PAD;
   const minChangeCapacity = occupiedCapacity(userLock, null, 0) + CELL_CAPACITY_PAD;
-  const requiredFunding = requestCapacity + minChangeCapacity + FEE_MARGIN;
+  const requiredFunding = requestCapacity + leaseFee.shannons + minChangeCapacity + FEE_MARGIN;
 
   reportProgress(options, popup, "funding", "Selecting a JoyID CKB cell to create the request cell.");
   const funding = selectFunding(await collectFundingCells(userLock), requiredFunding);
@@ -184,7 +184,7 @@ export async function reserveVaultCapacity(
 
 function buildRequestTransaction(input: {
   amount: { units: bigint };
-  leaseFee: { units: bigint };
+  leaseFee: { units: bigint; shannons: bigint };
   funding: { inputs: RequestInput[]; total: bigint };
   userLock: JoyScript;
   vaultCell: VaultCell;
@@ -194,7 +194,7 @@ function buildRequestTransaction(input: {
   scripts: RequiredScripts;
   expiry: bigint;
 }): CKBTransaction {
-  const spendCapacity = input.requestCapacity + FEE_MARGIN;
+  const spendCapacity = input.requestCapacity + input.leaseFee.shannons + FEE_MARGIN;
   const changeCapacity = input.funding.total - spendCapacity;
   if (changeCapacity < input.minChangeCapacity) {
     throw new Error("Funding cell does not leave enough capacity for JoyID change after request creation.");
@@ -212,7 +212,7 @@ function buildRequestTransaction(input: {
     inputs: [...input.funding.inputs, input.vaultCell.input],
     outputs: [
       {
-        capacity: toHex(input.vaultCell.capacity),
+        capacity: toHex(input.vaultCell.capacity + input.leaseFee.shannons),
         lock: input.vaultCell.lock,
         type: input.vaultCell.type,
       },
@@ -230,6 +230,7 @@ function buildRequestTransaction(input: {
       vaultDataHex({
         ...input.vaultCell.data,
         reserved: input.vaultCell.data.reserved + input.amount.units,
+        feeBalance: input.vaultCell.data.feeBalance + input.leaseFee.units,
       }),
       requestDataHex({ status: 1, amount: input.amount.units, leaseFee: input.leaseFee.units, expiry: input.expiry }),
       "0x",

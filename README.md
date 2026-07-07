@@ -30,13 +30,37 @@ The app uses JoyID on CKB:
 
 ## Fiber Lifecycle
 
-Capacity starts as `requested`. Opening a channel sends the request to LiquidLane Core, which either submits `open_channel` to a configured Fiber node or keeps the request in `pending_fiber_channel`. The UI does not invent channel ids.
+Capacity starts as `requested`. Opening a channel sends the request to LiquidLane Core, which submits `open_channel` to a configured Fiber node. If Core has no `FIBER_RPC_URL`, the action fails clearly and the UI does not invent channel ids.
 
 Set `NEXT_PUBLIC_API_BASE_URL` if LiquidLane Core is not running on `http://localhost:8080`.
 Set `NEXT_PUBLIC_CKB_RPC_URL` to a CKB RPC endpoint that accepts `get_cells` and `send_transaction`.
 Set `NEXT_PUBLIC_JOYID_AGGREGATOR_URL` if JoyID sub-key unlock proofs need a custom CoTA aggregator; the app defaults to the public testnet/mainnet endpoints.
 Set `NEXT_PUBLIC_CKB_EXPLORER_URL` to the CKB testnet explorer base URL used for deployment links.
 The vault address is loaded from LiquidLane Core through `/vault`; configure it on the backend.
+
+## Vercel Environment
+
+Set these for the hosted frontend:
+
+```env
+NEXT_PUBLIC_API_BASE_URL=https://<render-core-service>.onrender.com
+NEXT_PUBLIC_CKB_NETWORK=testnet
+NEXT_PUBLIC_JOYID_APP_URL=https://testnet.joyid.dev
+NEXT_PUBLIC_JOYID_SERVER_URL=https://api.testnet.joyid.dev/api/v1
+NEXT_PUBLIC_JOYID_AGGREGATOR_URL=https://cota.nervina.dev/aggregator
+NEXT_PUBLIC_CKB_RPC_URL=https://testnet.ckb.dev/rpc
+NEXT_PUBLIC_CKB_EXPLORER_URL=https://pudge.explorer.nervos.org
+```
+
+Optional JoyID cell dep overrides are only needed if JoyID rotates its testnet code cell:
+
+```env
+NEXT_PUBLIC_JOYID_CELL_DEP_TX_HASH=0x...
+NEXT_PUBLIC_JOYID_CELL_DEP_INDEX=0x0
+NEXT_PUBLIC_JOYID_CELL_DEP_TYPE=code
+```
+
+The frontend does not own vault truth. It loads the active vault address, vault cell out-point, and deployed script references from Core through `/vault` and `/dashboard`.
 
 ## Testnet Script Deployment
 

@@ -29,6 +29,7 @@ import {
   Wifi,
 } from "lucide-react";
 import type {
+  ActionTxState,
   Dashboard,
   LiquidityQuote,
   LiquidityRequest,
@@ -53,6 +54,7 @@ export type ConsoleAppProps = {
   copiedWalletAddress: boolean;
   quote: LiquidityQuote | null;
   supplyTx: SupplyTxState | null;
+  actionTx: ActionTxState | null;
   vaultReady: boolean;
   utilization: number;
   claimableFees: number;
@@ -64,6 +66,8 @@ export type ConsoleAppProps = {
   onDeposit: (event: FormEvent<HTMLFormElement>) => void;
   onRequest: (event: FormEvent<HTMLFormElement>) => void;
   onOpenFiberChannel: (id: string) => void;
+  onWithdrawPosition: (id: string) => void;
+  onClaimFees: (id: string) => void;
 };
 
 const consoleItems: { view: ConsoleView; label: string; detail: string; icon: typeof CircleDollarSign }[] = [
@@ -85,6 +89,7 @@ export function ConsoleApp(props: ConsoleAppProps) {
     copiedWalletAddress,
     quote,
     supplyTx,
+    actionTx,
     vaultReady,
     utilization,
     claimableFees,
@@ -96,6 +101,8 @@ export function ConsoleApp(props: ConsoleAppProps) {
     onDeposit,
     onRequest,
     onOpenFiberChannel,
+    onWithdrawPosition,
+    onClaimFees,
   } = props;
   const vault = dashboard.vault;
   const consoleRole = activeView === "vault" ? dashboard.user.role : activeView;
@@ -161,6 +168,8 @@ export function ConsoleApp(props: ConsoleAppProps) {
             </div>
           </section>
 
+          <ActionTransactionPanel state={actionTx} />
+
           {activeView === "lp" ? (
             <LiquidityProvisionView dashboard={dashboard} utilization={utilization} vaultReady={vaultReady} busy={busy} supplyTx={supplyTx} onDeposit={onDeposit} />
           ) : activeView === "merchant" ? (
@@ -168,7 +177,7 @@ export function ConsoleApp(props: ConsoleAppProps) {
           ) : activeView === "operator" ? (
             <NodeConsoleView dashboard={dashboard} busy={busy} utilization={utilization} onOpenFiberChannel={onOpenFiberChannel} />
           ) : (
-            <VaultStatsView dashboard={dashboard} utilization={utilization} claimableFees={claimableFees} />
+            <VaultStatsView dashboard={dashboard} utilization={utilization} claimableFees={claimableFees} busy={busy} onWithdrawPosition={onWithdrawPosition} onClaimFees={onClaimFees} />
           )}
         </div>
       </section>
@@ -340,9 +349,18 @@ function NodeConsoleView({ dashboard, busy, utilization, onOpenFiberChannel }: {
         </div>
       </section>
 
-      <section className="topology-panel">
+      <section className="topology-panel" aria-label="Fiber handoff readiness">
         <div className="topology-image" />
-        <span>Topology visualization data stream</span>
+        <div className="topology-content">
+          <span className="topology-badge">{pending.length ? `${pending.length} pending` : "No pending opens"}</span>
+          <h2>Fiber handoff readiness</h2>
+          <p>{pending.length ? "Reserved requests are ready for the configured Fiber RPC node." : "The lane is waiting for merchant requests backed by vault liquidity."}</p>
+          <div className="topology-stats">
+            <div><strong>{openChannels}</strong><span>open channels</span></div>
+            <div><strong>{pending.length}</strong><span>pending opens</span></div>
+            <div><strong>{assetAmount(vault.pending_channel_liquidity, vault.asset)}</strong><span>in handoff</span></div>
+          </div>
+        </div>
       </section>
 
       <section className="console-panel">
@@ -369,7 +387,14 @@ function NodeConsoleView({ dashboard, busy, utilization, onOpenFiberChannel }: {
   );
 }
 
-function VaultStatsView({ dashboard, utilization, claimableFees }: { dashboard: Dashboard; utilization: number; claimableFees: number }) {
+function VaultStatsView({ dashboard, utilization, claimableFees, busy, onWithdrawPosition, onClaimFees }: {
+  dashboard: Dashboard;
+  utilization: number;
+  claimableFees: number;
+  busy: string | null;
+  onWithdrawPosition: (id: string) => void;
+  onClaimFees: (id: string) => void;
+}) {
   const vault = dashboard.vault;
   return (
     <div className="vault-layout">
@@ -389,7 +414,7 @@ function VaultStatsView({ dashboard, utilization, claimableFees }: { dashboard: 
           <Metric label="LPs" value={String(vault.lp_count)} />
         </div>
       </section>
-      <AccountingPanels dashboard={dashboard} claimableFees={claimableFees} />
+      <AccountingPanels dashboard={dashboard} claimableFees={claimableFees} busy={busy} onWithdrawPosition={onWithdrawPosition} onClaimFees={onClaimFees} />
     </div>
   );
 }
@@ -463,7 +488,13 @@ function RequestQueue({ requests, busy, canOpen, onOpenFiberChannel, compact = f
   );
 }
 
-function AccountingPanels({ dashboard, claimableFees }: { dashboard: Dashboard; claimableFees: number }) {
+function AccountingPanels({ dashboard, claimableFees, busy, onWithdrawPosition, onClaimFees }: {
+  dashboard: Dashboard;
+  claimableFees: number;
+  busy: string | null;
+  onWithdrawPosition: (id: string) => void;
+  onClaimFees: (id: string) => void;
+}) {
   return (
     <section className="accounting-grid console-accounting" aria-label="Vault accounting">
       <div className="table-panel">
@@ -494,6 +525,12 @@ function AccountingPanels({ dashboard, claimableFees }: { dashboard: Dashboard; 
               <div className="position-footer">
                 <span className="status-tag" data-status={position.status}>{statusLabel(position.status)}</span>
                 <code>{shortHash(position.supply_tx_hash)}</code>
+                <button type="button" className="ghost-button small" onClick={() => onWithdrawPosition(position.id)} disabled={busy === `withdraw-${position.id}` || position.available_amount <= 0}>
+                  {busy === `withdraw-${position.id}` ? <Loader2 className="spin" size={14} /> : <ArrowRight size={14} />} Withdraw
+                </button>
+                <button type="button" className="ghost-button small" onClick={() => onClaimFees(position.id)} disabled={busy === `claim-${position.id}` || Math.max(position.fees_earned - position.fees_claimed, 0) <= 0}>
+                  {busy === `claim-${position.id}` ? <Loader2 className="spin" size={14} /> : <Banknote size={14} />} Claim
+                </button>
               </div>
             </div>
           )) : <EmptyState title="No LP positions" text="Supply liquidity to create a receipt-backed vault position." />}
@@ -536,7 +573,7 @@ function AccountingPanels({ dashboard, claimableFees }: { dashboard: Dashboard; 
               <span><Landmark size={16} /></span>
               <p>{event.label}<strong>{event.amount ? ` ${assetAmount(event.amount, event.asset ?? DEFAULT_ASSET)}` : ""}</strong></p>
             </div>
-          )) : <EmptyState title="No activity yet" text="Wallet and vault actions will appear here after they are accepted by Core." />}
+          )) : <EmptyState title="No activity yet" text="Confirmed wallet, vault, and Fiber events will appear here after Core accepts them." />}
         </div>
       </div>
     </section>
@@ -590,6 +627,53 @@ function SupplyTransactionPanel({ state }: { state: SupplyTxState | null }) {
         </div>
       ) : (
         <p className="muted compact-note">No transaction hash has been broadcast yet.</p>
+      )}
+    </div>
+  );
+}
+
+
+function ActionTransactionPanel({ state }: { state: ActionTxState | null }) {
+  if (!state) return null;
+  const actionLabel = {
+    request: "Capacity request",
+    withdraw: "Withdrawal",
+    claim: "Fee claim",
+    fiber: "Fiber channel",
+  }[state.action];
+
+  return (
+    <div className="supply-transaction action-transaction" data-status={state.status} role="status" aria-live="polite">
+      <div className="supply-transaction-head">
+        <span className="tx-state-icon" aria-hidden="true">
+          {state.status === "success" || state.status === "ready" ? <CheckCircle2 size={18} /> : state.status === "failed" ? <AlertTriangle size={18} /> : <Loader2 className="spin" size={18} />}
+        </span>
+        <div>
+          <strong>{state.title}</strong>
+          <span>{state.message}</span>
+        </div>
+        <time>{state.updatedAt}</time>
+      </div>
+      <div className="tx-receipt-row">
+        <span>Action</span>
+        <strong>{actionLabel}</strong>
+        <small>{state.status}</small>
+      </div>
+      {state.amount && state.asset ? (
+        <div className="supply-context">
+          <span>Amount</span>
+          <strong>{assetAmount(state.amount, state.asset)}</strong>
+        </div>
+      ) : null}
+      {state.error ? <p className="supply-error">{state.error}</p> : null}
+      {state.txHash ? (
+        <div className="tx-receipt-row">
+          <span>Transaction</span>
+          <code>{shortHash(state.txHash)}</code>
+          {state.explorerUrl ? <a href={state.explorerUrl} target="_blank" rel="noreferrer"><ExternalLink size={14} /> Explorer</a> : null}
+        </div>
+      ) : (
+        <p className="muted compact-note">No CKB transaction hash has been broadcast for this action yet.</p>
       )}
     </div>
   );
