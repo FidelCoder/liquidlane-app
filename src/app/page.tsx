@@ -299,6 +299,32 @@ const EXPLORER_BASE = process.env.NEXT_PUBLIC_CKB_EXPLORER_URL ?? "https://pudge
 const DEPLOYMENT_POPUP_POOL_SIZE = 5;
 const TOKEN_KEY = "liquidlane_token";
 const ADDRESS_KEY = "liquidlane_ckb_address";
+const WALLET_KEY = "liquidlane_joyid_wallet";
+
+
+function persistWalletSession(wallet: ConnectedCkbWallet) {
+  window.localStorage.setItem(WALLET_KEY, JSON.stringify(wallet));
+  window.localStorage.setItem(ADDRESS_KEY, wallet.ckbAddress);
+}
+
+function restoreWalletSession(): ConnectedCkbWallet | null {
+  const raw = window.localStorage.getItem(WALLET_KEY);
+  if (!raw) return null;
+  try {
+    const wallet = JSON.parse(raw) as ConnectedCkbWallet;
+    if (!wallet?.ckbAddress || wallet.walletType !== "joyid_ckb" || !wallet.lockScript || !wallet.joyIdConnection) {
+      return null;
+    }
+    return wallet;
+  } catch {
+    return null;
+  }
+}
+
+function clearWalletSession() {
+  window.localStorage.removeItem(WALLET_KEY);
+  window.localStorage.removeItem(ADDRESS_KEY);
+}
 
 const services: Service[] = [
   {
@@ -417,9 +443,14 @@ export default function Home() {
 
   useEffect(() => {
     loadVault();
-    const savedAddress = window.localStorage.getItem(ADDRESS_KEY)?.trim();
+    const restoredWallet = restoreWalletSession();
+    const savedAddress = restoredWallet?.ckbAddress ?? window.localStorage.getItem(ADDRESS_KEY)?.trim();
     const savedToken = window.localStorage.getItem(TOKEN_KEY);
-    if (savedAddress) {
+    if (restoredWallet) {
+      setWallet(restoredWallet);
+      setCkbAddress(restoredWallet.ckbAddress);
+      setStatus("JoyID wallet restored. LiquidLane is syncing your workspace.");
+    } else if (savedAddress) {
       setCkbAddress(savedAddress);
       if (!savedToken) setStatus("Wallet address restored. Reconnect JoyID when a service needs a signature.");
     }
@@ -443,7 +474,7 @@ export default function Home() {
       const connected = await connectCkbWallet(popup);
       setWallet(connected);
       setCkbAddress(connected.ckbAddress);
-      window.localStorage.setItem(ADDRESS_KEY, connected.ckbAddress);
+      persistWalletSession(connected);
       setStatus("JoyID connected. Choose the service you want to use.");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not connect CKB wallet.");
@@ -472,7 +503,7 @@ export default function Home() {
         activeWallet = await connectCkbWallet(popup);
         setWallet(activeWallet);
         setCkbAddress(activeWallet.ckbAddress);
-        window.localStorage.setItem(ADDRESS_KEY, activeWallet.ckbAddress);
+        persistWalletSession(activeWallet);
       }
 
       const connectResponse = await fetch(`${API_BASE}/auth/connect`, {
@@ -506,7 +537,7 @@ export default function Home() {
 
   function signOut() {
     window.localStorage.removeItem(TOKEN_KEY);
-    window.localStorage.removeItem(ADDRESS_KEY);
+    clearWalletSession();
     setToken(null);
     setWallet(null);
     setCkbAddress(null);
@@ -714,7 +745,7 @@ export default function Home() {
         }
         setWallet(activeWallet);
         setCkbAddress(activeWallet.ckbAddress);
-        window.localStorage.setItem(ADDRESS_KEY, activeWallet.ckbAddress);
+        persistWalletSession(activeWallet);
         writeSupplyState({
           status: "ready",
           step: "signing",
@@ -890,7 +921,7 @@ export default function Home() {
         }
         setWallet(activeWallet);
         setCkbAddress(activeWallet.ckbAddress);
-        window.localStorage.setItem(ADDRESS_KEY, activeWallet.ckbAddress);
+        persistWalletSession(activeWallet);
         writeActionTx({
           status: "ready",
           action: "request",
@@ -1043,7 +1074,7 @@ export default function Home() {
       }
       setWallet(activeWallet);
       setCkbAddress(activeWallet.ckbAddress);
-      window.localStorage.setItem(ADDRESS_KEY, activeWallet.ckbAddress);
+      persistWalletSession(activeWallet);
     }
     return activeWallet;
   }
@@ -1297,7 +1328,7 @@ export default function Home() {
         }
         setWallet(activeWallet);
         setCkbAddress(activeWallet.ckbAddress);
-        window.localStorage.setItem(ADDRESS_KEY, activeWallet.ckbAddress);
+        persistWalletSession(activeWallet);
         setDeploymentNotice("JoyID reconnected. Click Deploy to testnet again to sign the deployment transaction.");
         setStatus("JoyID reconnected. Click Deploy to testnet again to sign the deployment transaction.");
         return;
