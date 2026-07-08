@@ -383,7 +383,7 @@ function vaultDataHex(data: VaultData) {
 }
 
 function requestDataHex(data: { status: number; amount: bigint; leaseFee: bigint; expiry: bigint }) {
-  return joinHex([`0x${data.status.toString(16).padStart(2, "0")}`, u64Le(data.amount), u64Le(data.leaseFee), u64Le(data.expiry)]);
+  return joinHex(["0x01", `0x${data.status.toString(16).padStart(2, "0")}`, u64Le(data.amount), u64Le(data.leaseFee), u64Le(data.expiry)]);
 }
 
 function occupiedCapacity(lock: JoyScript, type: JoyScript | null, dataLength: number) {
