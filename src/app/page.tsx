@@ -1363,8 +1363,9 @@ export default function Home() {
   const hasActiveWallet = Boolean(wallet);
   const hasSavedAddress = Boolean(ckbAddress);
   const hasCoreSession = Boolean(dashboard || token);
-  const canBrowseServices = Boolean(hasActiveWallet || hasCoreSession);
-  const needsWalletReconnect = Boolean(hasSavedAddress && !hasActiveWallet);
+  const hasReadySession = Boolean(hasActiveWallet || hasCoreSession);
+  const canBrowseServices = hasReadySession;
+  const needsWalletReconnect = Boolean(hasSavedAddress && !hasReadySession);
   const heroActionLabel = canBrowseServices ? "Choose service" : needsWalletReconnect ? "Reconnect wallet" : "Connect wallet";
   const utilization = useMemo(() => {
     if (!vaultSummary || vaultSummary.total_deposits === 0) return 0;
@@ -1383,7 +1384,7 @@ export default function Home() {
         dashboard={activeDashboard}
         activeView={activeView}
         ckbAddress={ckbAddress}
-        walletReady={hasActiveWallet}
+        walletReady={hasReadySession}
         loading={loading}
         busy={busy}
         status={status}
@@ -1428,10 +1429,10 @@ export default function Home() {
             {dashboard ? <a href="#workspace">Workspace</a> : <a href="#services">Services</a>}
             <a href="#lifecycle">Lifecycle</a>
             {ckbAddress ? (
-              <span className="connected-pill" data-state={hasActiveWallet ? "active" : "restored"}>
+              <span className="connected-pill" data-state={hasReadySession ? "active" : "restored"}>
                 <UserRound size={15} />
                 <span>{shortAddress(ckbAddress)}</span>
-                <small>{hasActiveWallet ? "Ready" : "Reconnect"}</small>
+                <small>{hasReadySession ? "Ready" : "Reconnect"}</small>
                 <button
                   type="button"
                   className="copy-address-button"
@@ -1445,7 +1446,7 @@ export default function Home() {
             ) : null}
             {hasSavedAddress || hasCoreSession ? (
               <div className="wallet-controls">
-                {!hasActiveWallet ? (
+                {!hasReadySession ? (
                   <button type="button" onClick={connectWallet} disabled={busy === "connect"}>
                     {busy === "connect" ? <Loader2 className="spin" size={16} /> : <UserRound size={16} />} Reconnect
                   </button>
@@ -1496,7 +1497,7 @@ export default function Home() {
           {services.map((service) => {
             const Icon = service.icon;
             const active = selectedRole === service.role;
-            const actionLabel = dashboard?.user.role === service.role ? "Current service" : hasActiveWallet ? "Open service" : hasSavedAddress ? "Reconnect + open" : "Connect + open";
+            const actionLabel = dashboard?.user.role === service.role ? "Current service" : hasReadySession ? "Open service" : hasSavedAddress ? "Reconnect + open" : "Connect + open";
             return (
               <article className={active ? "service-card active" : "service-card"} key={service.role}>
                 <span className="icon"><Icon size={21} /></span>
