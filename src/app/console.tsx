@@ -31,6 +31,7 @@ import {
 import type {
   ActionTxState,
   Dashboard,
+  HealthStatus,
   LiquidityQuote,
   LiquidityRequest,
   Role,
@@ -56,6 +57,8 @@ export type ConsoleAppProps = {
   supplyTx: SupplyTxState | null;
   actionTx: ActionTxState | null;
   vaultReady: boolean;
+  fiberRpcConfigured: boolean;
+  coreHealth: HealthStatus | null;
   utilization: number;
   claimableFees: number;
   onViewChange: (view: ConsoleView) => void;
@@ -64,8 +67,6 @@ export type ConsoleAppProps = {
   onSignOut: () => void;
   onRefresh: () => void | Promise<void>;
   onDeposit: (event: FormEvent<HTMLFormElement>) => void;
-  onProbeJoyIdUnlock: () => void;
-  onProbeJoyIdSdkTransfer: () => void;
   onRequest: (event: FormEvent<HTMLFormElement>) => void;
   onOpenFiberChannel: (id: string) => void;
   onWithdrawPosition: (id: string) => void;
@@ -93,6 +94,8 @@ export function ConsoleApp(props: ConsoleAppProps) {
     supplyTx,
     actionTx,
     vaultReady,
+    fiberRpcConfigured,
+    coreHealth,
     utilization,
     claimableFees,
     onViewChange,
@@ -101,14 +104,14 @@ export function ConsoleApp(props: ConsoleAppProps) {
     onSignOut,
     onRefresh,
     onDeposit,
-    onProbeJoyIdUnlock,
-    onProbeJoyIdSdkTransfer,
     onRequest,
     onOpenFiberChannel,
     onWithdrawPosition,
     onClaimFees,
   } = props;
   const vault = dashboard.vault;
+  const ckbRpcConfigured = coreHealth?.ckb_rpc_configured ?? false;
+  const betaReady = coreHealth?.beta_ready ?? false;
   const consoleRole = activeView === "vault" ? dashboard.user.role : activeView;
   const title = activeView === "vault" ? "Vault Accounting" : serviceLabel(consoleRole);
   const subtitle = activeView === "lp"
@@ -164,6 +167,9 @@ export function ConsoleApp(props: ConsoleAppProps) {
               <div className="console-health-row">
                 <span><i /> {vault.network}</span>
                 <span>Vault {vault.configured ? "configured" : "pending"}</span>
+                <span>CKB RPC {ckbRpcConfigured ? "configured" : "missing"}</span>
+                <span>Fiber RPC {fiberRpcConfigured ? "configured" : "missing"}</span>
+                <span>Beta {betaReady ? "ready" : "warming"}</span>
                 <span>Synced {new Intl.DateTimeFormat("en-US", { hour: "2-digit", minute: "2-digit" }).format(new Date())}</span>
               </div>
             </div>
@@ -175,11 +181,11 @@ export function ConsoleApp(props: ConsoleAppProps) {
           <ActionTransactionPanel state={actionTx} />
 
           {activeView === "lp" ? (
-            <LiquidityProvisionView dashboard={dashboard} utilization={utilization} vaultReady={vaultReady} busy={busy} supplyTx={supplyTx} onDeposit={onDeposit} onProbeJoyIdUnlock={onProbeJoyIdUnlock} onProbeJoyIdSdkTransfer={onProbeJoyIdSdkTransfer} />
+            <LiquidityProvisionView dashboard={dashboard} utilization={utilization} vaultReady={vaultReady} busy={busy} supplyTx={supplyTx} onDeposit={onDeposit} />
           ) : activeView === "merchant" ? (
-            <MerchantTerminalView dashboard={dashboard} busy={busy} quote={quote} onRequest={onRequest} onOpenFiberChannel={onOpenFiberChannel} />
+            <MerchantTerminalView dashboard={dashboard} busy={busy} quote={quote} fiberRpcConfigured={fiberRpcConfigured} onRequest={onRequest} onOpenFiberChannel={onOpenFiberChannel} />
           ) : activeView === "operator" ? (
-            <NodeConsoleView dashboard={dashboard} busy={busy} utilization={utilization} onOpenFiberChannel={onOpenFiberChannel} />
+            <NodeConsoleView dashboard={dashboard} busy={busy} utilization={utilization} fiberRpcConfigured={fiberRpcConfigured} onOpenFiberChannel={onOpenFiberChannel} />
           ) : (
             <VaultStatsView dashboard={dashboard} utilization={utilization} claimableFees={claimableFees} busy={busy} onWithdrawPosition={onWithdrawPosition} onClaimFees={onClaimFees} />
           )}
@@ -218,15 +224,13 @@ function ConsoleSidebar({ activeView, status, onViewChange }: { activeView: Cons
   );
 }
 
-function LiquidityProvisionView({ dashboard, utilization, vaultReady, busy, supplyTx, onDeposit, onProbeJoyIdUnlock, onProbeJoyIdSdkTransfer }: {
+function LiquidityProvisionView({ dashboard, utilization, vaultReady, busy, supplyTx, onDeposit }: {
   dashboard: Dashboard;
   utilization: number;
   vaultReady: boolean;
   busy: string | null;
   supplyTx: SupplyTxState | null;
   onDeposit: (event: FormEvent<HTMLFormElement>) => void;
-  onProbeJoyIdUnlock: () => void;
-  onProbeJoyIdSdkTransfer: () => void;
 }) {
   const vault = dashboard.vault;
   return (
@@ -259,7 +263,7 @@ function LiquidityProvisionView({ dashboard, utilization, vaultReady, busy, supp
           <button type="submit" className="gold-button" disabled={busy === "deposit" || !vaultReady}>{busy === "deposit" ? <Loader2 className="spin" size={16} /> : <Banknote size={16} />} Confirm Supply</button>
         </form>
         {vaultReady && vault.address ? <p className="muted compact-note">Active vault <code>{shortAddress(vault.address)}</code></p> : <p className="muted compact-note">Vault setup is pending on Core.</p>}
-        <SupplyTransactionPanel state={supplyTx} onProbeJoyIdUnlock={onProbeJoyIdUnlock} onProbeJoyIdSdkTransfer={onProbeJoyIdSdkTransfer} probeBusy={busy === "joyid-probe" || busy === "joyid-sdk-probe"} />
+        <SupplyTransactionPanel state={supplyTx} />
       </section>
 
       <section className="console-panel reserves-panel">
@@ -276,10 +280,11 @@ function LiquidityProvisionView({ dashboard, utilization, vaultReady, busy, supp
   );
 }
 
-function MerchantTerminalView({ dashboard, busy, quote, onRequest, onOpenFiberChannel }: {
+function MerchantTerminalView({ dashboard, busy, quote, fiberRpcConfigured, onRequest, onOpenFiberChannel }: {
   dashboard: Dashboard;
   busy: string | null;
   quote: LiquidityQuote | null;
+  fiberRpcConfigured: boolean;
   onRequest: (event: FormEvent<HTMLFormElement>) => void;
   onOpenFiberChannel: (id: string) => void;
 }) {
@@ -320,21 +325,25 @@ function MerchantTerminalView({ dashboard, busy, quote, onRequest, onOpenFiberCh
           </div>
           <span className="count-pill">{dashboard.vault.active_requests} Active</span>
         </div>
-        <RequestQueue requests={dashboard.liquidity_requests} busy={busy} canOpen onOpenFiberChannel={onOpenFiberChannel} />
+        <RequestQueue requests={dashboard.liquidity_requests} busy={busy} canOpen fiberRpcConfigured={fiberRpcConfigured} onOpenFiberChannel={onOpenFiberChannel} />
       </section>
     </div>
   );
 }
 
-function NodeConsoleView({ dashboard, busy, utilization, onOpenFiberChannel }: {
+function NodeConsoleView({ dashboard, busy, utilization, fiberRpcConfigured, onOpenFiberChannel }: {
   dashboard: Dashboard;
   busy: string | null;
   utilization: number;
+  fiberRpcConfigured: boolean;
   onOpenFiberChannel: (id: string) => void;
 }) {
   const vault = dashboard.vault;
   const openChannels = dashboard.liquidity_requests.filter((request) => request.status === "channel_open").length;
   const pending = dashboard.liquidity_requests.filter((request) => request.status === "requested" || request.status === "pending_fiber_channel");
+  const operations = dashboard.liquidity_requests.filter((request) =>
+    request.status === "pending_fiber_channel" || request.status === "channel_open" || request.status === "failed"
+  );
   return (
     <div className="operator-layout">
       <section className="operator-stats">
@@ -360,7 +369,7 @@ function NodeConsoleView({ dashboard, busy, utilization, onOpenFiberChannel }: {
         <div className="topology-content">
           <span className="topology-badge">{pending.length ? `${pending.length} pending` : "No pending opens"}</span>
           <h2>Fiber handoff readiness</h2>
-          <p>{pending.length ? "Reserved requests are ready for the configured Fiber RPC node." : "The lane is waiting for merchant requests backed by vault liquidity."}</p>
+          <p>{pending.length ? (fiberRpcConfigured ? "Reserved requests are ready for the configured Fiber RPC node." : "Reserved requests are waiting for Core to be connected to a Fiber RPC node.") : "The lane is waiting for merchant requests backed by vault liquidity."}</p>
           <div className="topology-stats">
             <div><strong>{openChannels}</strong><span>open channels</span></div>
             <div><strong>{pending.length}</strong><span>pending opens</span></div>
@@ -377,7 +386,7 @@ function NodeConsoleView({ dashboard, busy, utilization, onOpenFiberChannel }: {
           </div>
           <Filter size={18} />
         </div>
-        <RequestQueue requests={dashboard.liquidity_requests} busy={busy} canOpen onOpenFiberChannel={onOpenFiberChannel} compact />
+        <RequestQueue requests={dashboard.liquidity_requests} busy={busy} canOpen fiberRpcConfigured={fiberRpcConfigured} onOpenFiberChannel={onOpenFiberChannel} compact />
       </section>
 
       <section className="console-panel operations-panel">
@@ -387,7 +396,7 @@ function NodeConsoleView({ dashboard, busy, utilization, onOpenFiberChannel }: {
             <p>Fiber channel execution status.</p>
           </div>
         </div>
-        <EmptyState title="No active channel operation" text="Channel open operations appear here after capacity is reserved." />
+        <FiberOperationList requests={operations} />
       </section>
     </div>
   );
@@ -450,10 +459,11 @@ function ReserveTable({ dashboard }: { dashboard: Dashboard }) {
   );
 }
 
-function RequestQueue({ requests, busy, canOpen, onOpenFiberChannel, compact = false }: {
+function RequestQueue({ requests, busy, canOpen, fiberRpcConfigured = true, onOpenFiberChannel, compact = false }: {
   requests: LiquidityRequest[];
   busy: string | null;
   canOpen: boolean;
+  fiberRpcConfigured?: boolean;
   onOpenFiberChannel: (id: string) => void;
   compact?: boolean;
 }) {
@@ -474,18 +484,50 @@ function RequestQueue({ requests, busy, canOpen, onOpenFiberChannel, compact = f
               <code>Request: {shortId(request.request_cell_id)}</code>
               {request.request_tx_hash ? <TxMiniLink txHash={request.request_tx_hash} label="Request tx" /> : null}
               {request.fiber_error ? <span className="error-text">{request.fiber_error}</span> : null}
+              {request.status === "requested" && canOpen && !fiberRpcConfigured ? <span className="error-text">Set FIBER_RPC_URL on Core before opening this channel.</span> : null}
             </div>
           </div>
           <div className="queue-actions">
             <span className="status-tag" data-status={request.status}>{statusLabel(request.status)}</span>
             {request.status === "requested" && canOpen ? (
-              <button type="button" className="ghost-button small" onClick={() => onOpenFiberChannel(request.id)} disabled={busy === request.id}>
-                {busy === request.id ? <Loader2 className="spin" size={14} /> : <ArrowUpRight size={14} />} Open Fiber
+              <button type="button" className="ghost-button small" onClick={() => onOpenFiberChannel(request.id)} disabled={busy === request.id || !fiberRpcConfigured} title={!fiberRpcConfigured ? "Set FIBER_RPC_URL on Core before opening Fiber channels." : "Open Fiber channel"}>
+                {busy === request.id ? <Loader2 className="spin" size={14} /> : <ArrowUpRight size={14} />} {fiberRpcConfigured ? "Open Fiber" : "Fiber RPC missing"}
               </button>
             ) : request.channel_id ? <code>{shortHash(request.channel_id)}</code> : request.fiber_temporary_channel_id ? <code>{shortHash(request.fiber_temporary_channel_id)}</code> : null}
           </div>
         </article>
       ))}
+    </div>
+  );
+}
+
+function FiberOperationList({ requests }: { requests: LiquidityRequest[] }) {
+  if (!requests.length) {
+    return <EmptyState title="No active channel operation" text="Channel open operations appear here after capacity is reserved." />;
+  }
+
+  return (
+    <div className="fiber-operation-list">
+      {requests.map((request) => {
+        const channelRef = request.channel_id ?? request.fiber_temporary_channel_id;
+        return (
+          <article key={request.id} className="fiber-operation-card" data-status={request.status}>
+            <div>
+              <span className="queue-status"><RadioTower size={15} /></span>
+              <div>
+                <strong>{request.status === "channel_open" ? "Channel open" : request.status === "pending_fiber_channel" ? "Opening" : "Open failed"}</strong>
+                <span>{assetAmount(request.amount, request.asset)} for {request.merchant_name}</span>
+                {request.fiber_peer_pubkey ? <code>Peer: {shortPubkey(request.fiber_peer_pubkey)}</code> : null}
+                {channelRef ? <code>Fiber ref: {shortHash(channelRef)}</code> : null}
+                {request.request_tx_hash ? <TxMiniLink txHash={request.request_tx_hash} label="Request tx" /> : null}
+                {request.fiber_note ? <span>{request.fiber_note}</span> : null}
+                {request.fiber_error ? <span className="error-text">{request.fiber_error}</span> : null}
+              </div>
+            </div>
+            <span className="status-tag" data-status={request.status}>{statusLabel(request.status)}</span>
+          </article>
+        );
+      })}
     </div>
   );
 }
@@ -592,7 +634,7 @@ const supplySteps: { id: SupplyStepId; label: string }[] = [
   { id: "settlement", label: "Receipt" },
 ];
 
-function SupplyTransactionPanel({ state, onProbeJoyIdUnlock, onProbeJoyIdSdkTransfer, probeBusy = false }: { state: SupplyTxState | null; onProbeJoyIdUnlock?: () => void; onProbeJoyIdSdkTransfer?: () => void; probeBusy?: boolean }) {
+function SupplyTransactionPanel({ state }: { state: SupplyTxState | null }) {
   if (!state) return null;
   const activeIndex = supplySteps.findIndex((step) => step.id === state.step);
 
@@ -622,20 +664,6 @@ function SupplyTransactionPanel({ state, onProbeJoyIdUnlock, onProbeJoyIdSdkTran
       ) : null}
       {state.error ? <p className="supply-error">{state.error}</p> : null}
       {state.diagnostics?.length ? <DiagnosticList title="JoyID transaction diagnostics" items={state.diagnostics} /> : null}
-      {state.status === "failed" && (onProbeJoyIdUnlock || onProbeJoyIdSdkTransfer) ? (
-        <div className="probe-actions">
-          {onProbeJoyIdUnlock ? (
-            <button type="button" className="ghost-button small" onClick={onProbeJoyIdUnlock} disabled={probeBusy}>
-              {probeBusy ? <Loader2 className="spin" size={14} /> : <HelpCircle size={14} />} Raw unlock probe
-            </button>
-          ) : null}
-          {onProbeJoyIdSdkTransfer ? (
-            <button type="button" className="ghost-button small" onClick={onProbeJoyIdSdkTransfer} disabled={probeBusy}>
-              {probeBusy ? <Loader2 className="spin" size={14} /> : <HelpCircle size={14} />} SDK transfer probe
-            </button>
-          ) : null}
-        </div>
-      ) : null}
       {state.probeMessage ? (
         <div className="probe-result" data-status={state.probeStatus ?? "ready"}>
           <strong>{state.probeStatus === "success" ? "Probe passed" : state.probeStatus === "failed" ? "Probe failed" : "Probe running"}</strong>

@@ -247,6 +247,17 @@ export type Dashboard = {
   activity: ActivityEvent[];
 };
 
+export type HealthStatus = {
+  status: string;
+  service: string;
+  environment: string;
+  fiber_rpc_configured: boolean;
+  ckb_rpc_configured: boolean;
+  ckb_network: string;
+  vault_configured: boolean;
+  beta_ready: boolean;
+};
+
 type Service = {
   role: Role;
   title: string;
@@ -362,8 +373,25 @@ export default function Home() {
   const [selectedRole, setSelectedRole] = useState<Role | null>(null);
   const [activeView, setActiveView] = useState<ConsoleView>("lp");
   const [displayName, setDisplayName] = useState("");
+  const [fiberRpcConfigured, setFiberRpcConfigured] = useState(false);
+  const [coreHealth, setCoreHealth] = useState<HealthStatus | null>(null);
   const [status, setStatus] = useState("Connect a CKB wallet to choose a LiquidLane service.");
   const [copiedWalletAddress, setCopiedWalletAddress] = useState(false);
+  const loadHealth = useCallback(async function loadHealth() {
+    try {
+      const response = await fetch(`${API_BASE}/health`);
+      if (!response.ok) throw new Error("Could not load Core health.");
+      const health: HealthStatus = await response.json();
+      setFiberRpcConfigured(Boolean(health.fiber_rpc_configured));
+      setCoreHealth(health);
+      return health;
+    } catch {
+      setFiberRpcConfigured(false);
+      setCoreHealth(null);
+      return null;
+    }
+  }, []);
+
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [supplyTx, setSupplyTx] = useState<SupplyTxState | null>(null);
@@ -412,6 +440,7 @@ export default function Home() {
       if (!activeToken) return;
       setLoading(true);
       try {
+        await loadHealth();
         const response = await fetch(`${API_BASE}/dashboard?asset=${DEFAULT_ASSET}`, {
           headers: { Authorization: `Bearer ${activeToken}` },
         });
@@ -438,11 +467,12 @@ export default function Home() {
         setLoading(false);
       }
     },
-    [token],
+    [token, loadHealth],
   );
 
   useEffect(() => {
     loadVault();
+    loadHealth();
     const restoredWallet = restoreWalletSession();
     const savedAddress = restoredWallet?.ckbAddress ?? window.localStorage.getItem(ADDRESS_KEY)?.trim();
     const savedToken = window.localStorage.getItem(TOKEN_KEY);
@@ -458,7 +488,7 @@ export default function Home() {
       setToken(savedToken);
       refresh(savedToken);
     }
-  }, [loadVault, refresh]);
+  }, [loadHealth, loadVault, refresh]);
 
   async function connectWallet() {
     setBusy("connect");
@@ -1265,8 +1295,24 @@ export default function Home() {
     }
   }
 
+
   async function openFiberChannel(id: string) {
     const requestItem = dashboard?.liquidity_requests.find((item) => item.id === id);
+    if (!fiberRpcConfigured) {
+      const message = "FIBER_RPC_URL is required before submitting Fiber open_channel.";
+      writeActionTx({
+        status: "failed",
+        action: "fiber",
+        title: "Fiber RPC not configured",
+        message: "Core is tracking the reserved request, but it needs a Fiber node RPC endpoint before opening the channel.",
+        amount: requestItem?.amount,
+        asset: requestItem?.asset ?? DEFAULT_ASSET,
+        error: message,
+      });
+      setStatus(message);
+      return;
+    }
+
     setBusy(id);
     writeActionTx({
       status: "running",
@@ -1390,6 +1436,8 @@ export default function Home() {
         status={status}
         copiedWalletAddress={copiedWalletAddress}
         quote={quote}
+        fiberRpcConfigured={fiberRpcConfigured}
+        coreHealth={coreHealth}
         supplyTx={supplyTx}
         actionTx={actionTx}
         vaultReady={vaultReady}
@@ -1407,8 +1455,6 @@ export default function Home() {
         onSignOut={signOut}
         onRefresh={() => refresh()}
         onDeposit={handleDeposit}
-        onProbeJoyIdUnlock={runJoyIdProbe}
-        onProbeJoyIdSdkTransfer={runJoyIdSdkProbe}
         onRequest={handleRequest}
         onOpenFiberChannel={openFiberChannel}
         onWithdrawPosition={withdrawPosition}

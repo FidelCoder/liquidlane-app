@@ -32,13 +32,11 @@ export type CkbWalletProof = ConnectedCkbWallet & {
 
 export type JoyIdPopup = Window | null;
 
-export const ckbNetwork = (process.env.NEXT_PUBLIC_CKB_NETWORK === "mainnet" ? "mainnet" : "testnet") as
-  | "mainnet"
-  | "testnet";
+export const ckbNetwork = "testnet" as const;
 
-const joyidAppURL = process.env.NEXT_PUBLIC_JOYID_APP_URL ?? (ckbNetwork === "mainnet" ? "https://app.joy.id" : "https://testnet.joyid.dev");
-const joyidServerURL = process.env.NEXT_PUBLIC_JOYID_SERVER_URL ?? (ckbNetwork === "mainnet" ? "https://api.joy.id/api/v1" : "https://api.testnet.joyid.dev/api/v1");
-const joyidAggregatorURL = process.env.NEXT_PUBLIC_JOYID_AGGREGATOR_URL ?? (ckbNetwork === "mainnet" ? "https://cota.nervina.dev/mainnet-aggregator" : "https://cota.nervina.dev/aggregator");
+const joyidAppURL = process.env.NEXT_PUBLIC_JOYID_APP_URL ?? "https://testnet.joyid.dev";
+const joyidServerURL = process.env.NEXT_PUBLIC_JOYID_SERVER_URL ?? "https://api.testnet.joyid.dev/api/v1";
+const joyidAggregatorURL = process.env.NEXT_PUBLIC_JOYID_AGGREGATOR_URL ?? "https://cota.nervina.dev/aggregator";
 export const ckbRpcURL = normalizeCkbRpcURL(process.env.NEXT_PUBLIC_CKB_RPC_URL);
 
 const JOYID_SIGN_TIMEOUT_SECONDS = 120;
@@ -239,7 +237,7 @@ async function prepareJoyIdRawTransaction(
 
   showJoyIdPopupStatus(popup, "Preparing JoyID unlock", "Fetching JoyID sub-key proof before signing this CKB transaction.");
   const unlockEntry = await getSubkeyUnlock(joyidAggregatorURL, wallet.joyIdConnection);
-  prependCellDep(preparedTx, getCotaCellDep(ckbNetwork === "mainnet"));
+  prependCellDep(preparedTx, getCotaCellDep(false));
   const witnessArgs = deserializeWitnessArgsHex(preparedTx.witnesses[firstWitnessIndex]);
   preparedTx.witnesses[firstWitnessIndex] = serializeWitnessArgs({
     lock: witnessArgs.lock,
@@ -347,7 +345,7 @@ function joyIdFrontendHost() {
   try {
     return new URL(joyidAppURL).hostname;
   } catch {
-    return ckbNetwork === "mainnet" ? "app.joy.id" : "testnet.joyid.dev";
+    return "testnet.joyid.dev";
   }
 }
 
@@ -714,11 +712,14 @@ function configureJoyID() {
 }
 
 function normalizeCkbRpcURL(value?: string) {
-  const fallback = ckbNetwork === "mainnet" ? "https://mainnet.ckb.dev/rpc" : "https://testnet.ckb.dev/rpc";
+  const fallback = "https://testnet.ckb.dev/rpc";
   const rawUrl = value?.trim() || fallback;
   try {
     const url = new URL(rawUrl);
-    const isPublicCkbDev = url.hostname === "mainnet.ckb.dev" || url.hostname === "testnet.ckb.dev";
+    if (url.hostname === "mainnet.ckb.dev") {
+      return fallback;
+    }
+    const isPublicCkbDev = url.hostname === "testnet.ckb.dev";
     if (isPublicCkbDev && (url.pathname === "" || url.pathname === "/" || url.pathname === "/rpc/")) {
       url.pathname = "/rpc";
     }

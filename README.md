@@ -34,7 +34,7 @@ Capacity starts as `requested`. Opening a channel sends the request to LiquidLan
 
 Set `NEXT_PUBLIC_API_BASE_URL` if LiquidLane Core is not running on `http://localhost:8080`.
 Set `NEXT_PUBLIC_CKB_RPC_URL` to a CKB RPC endpoint that accepts `get_cells` and `send_transaction`.
-Set `NEXT_PUBLIC_JOYID_AGGREGATOR_URL` if JoyID sub-key unlock proofs need a custom CoTA aggregator; the app defaults to the public testnet/mainnet endpoints.
+Set `NEXT_PUBLIC_JOYID_AGGREGATOR_URL` if JoyID sub-key unlock proofs need a custom CoTA aggregator; the beta app defaults to public CKB testnet endpoints.
 Set `NEXT_PUBLIC_CKB_EXPLORER_URL` to the CKB testnet explorer base URL used for deployment links.
 The vault address is loaded from LiquidLane Core through `/vault`; configure it on the backend.
 

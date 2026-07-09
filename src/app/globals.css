@@ -595,6 +595,25 @@ code {
 .queue-item > div:first-child > div { display: grid; gap: 6px; min-width: 0; }
 .queue-item strong { font-size: 1.45rem; }
 .queue-actions { align-items: end; display: grid; gap: 10px; justify-items: end; }
+.fiber-operation-list { display: grid; gap: 12px; }
+.fiber-operation-card {
+  align-items: flex-start;
+  background: #0e1628;
+  border: 1px solid #26324a;
+  border-left: 4px solid var(--blue);
+  border-radius: 4px;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 16px;
+}
+.fiber-operation-card[data-status="channel_open"] { border-left-color: var(--teal); }
+.fiber-operation-card[data-status="failed"] { border-left-color: var(--red); }
+.fiber-operation-card > div:first-child { align-items: flex-start; display: flex; gap: 12px; min-width: 0; }
+.fiber-operation-card > div:first-child > div { display: grid; gap: 6px; min-width: 0; }
+.fiber-operation-card strong { color: var(--text); font-size: 1rem; }
+.fiber-operation-card span,
+.fiber-operation-card code { min-width: 0; overflow-wrap: anywhere; }
 .quote-strip {
   border-top: 1px solid var(--line);
   display: grid;
