@@ -186,6 +186,7 @@ export type LiquidityRequest = {
   lease_fee: number;
   routing_fee_bps: number;
   fiber_peer_pubkey: string | null;
+  fiber_peer_address: string | null;
   request_cell_id: string;
   request_tx_hash: string | null;
   request_cell_out_point: string | null;
@@ -218,6 +219,7 @@ export type RequestIntent = {
   lease_fee: number;
   routing_fee_bps: number;
   fiber_peer_pubkey: string | null;
+  fiber_peer_address: string | null;
   public_channel: boolean;
   request_cell_id: string;
   memo: string;
@@ -900,6 +902,7 @@ export default function Home() {
       amount,
       duration_days: durationDays,
       fiber_peer_pubkey: blankToUndefined(form.get("fiber_peer_pubkey")),
+      fiber_peer_address: blankToUndefined(form.get("fiber_peer_address")),
     };
     const progressTitle: Record<RequestProgressStep, string> = {
       vault: "Checking vault",
@@ -1616,6 +1619,7 @@ export default function Home() {
                     <label>Days<input name="duration_days" type="number" min="1" defaultValue="30" required /></label>
                   </div>
                   <label>Fiber peer pubkey<input name="fiber_peer_pubkey" placeholder="02..." /></label>
+                  <label>Fiber peer address<input name="fiber_peer_address" placeholder="/ip4/.../tcp/8228/p2p/..." /></label>
                   <button type="submit" disabled={busy === "request"}>{busy === "request" ? <Loader2 className="spin" size={16} /> : <ArrowRight size={16} />} Quote + reserve</button>
                 </form>
               </article>
@@ -1753,6 +1757,7 @@ export default function Home() {
                       <strong>{request.merchant_name}</strong>
                       <span>{assetAmount(request.amount, request.asset)} · {request.duration_days} days · fee {assetAmount(request.lease_fee, request.asset)}</span>
                       {request.fiber_peer_pubkey ? <code>{shortPubkey(request.fiber_peer_pubkey)}</code> : <span>No Fiber peer pubkey attached</span>}
+                      {request.fiber_peer_address ? <code>{shortFiberAddress(request.fiber_peer_address)}</code> : null}
                       <code>{shortId(request.request_cell_id)}</code>
                       {request.request_tx_hash ? <TxMiniLink txHash={request.request_tx_hash} label="Request tx" /> : null}
                       {request.fiber_note ? <span>{request.fiber_note}</span> : null}
@@ -1985,6 +1990,12 @@ function shortPubkey(pubkey: string) {
   const clean = pubkey.startsWith("0x") ? pubkey.slice(2) : pubkey;
   if (clean.length <= 18) return pubkey;
   return `${clean.slice(0, 10)}...${clean.slice(-8)}`;
+}
+
+function shortFiberAddress(address: string) {
+  if (address.length <= 34) return address;
+  const peer = address.split("/p2p/")[1] ?? address;
+  return `/p2p/${peer.slice(0, 10)}...${peer.slice(-8)}`;
 }
 
 function serviceLabel(role: Role) {

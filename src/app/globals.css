@@ -482,6 +482,7 @@ code {
 .console-grid { display: grid; gap: 28px; }
 .lp-grid { grid-template-columns: 386px minmax(0, 1fr); }
 .lp-grid .reserves-panel { grid-column: 2; grid-row: 1 / span 2; }
+.lp-grid .lp-positions-panel { grid-column: 1 / -1; }
 .merchant-grid { grid-template-columns: minmax(360px, 0.72fr) minmax(360px, 0.5fr); }
 .operator-layout,
 .vault-layout { display: grid; gap: 24px; }
@@ -706,6 +707,8 @@ code {
   padding: 14px;
 }
 .position-card { display: grid; gap: 14px; }
+.lp-position-list { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.lp-position-card { background: rgba(255, 255, 255, 0.03); }
 .position-main { align-items: flex-start; display: flex; gap: 12px; }
 .position-main > div,
 .state-row > div { display: grid; gap: 6px; min-width: 0; }
@@ -1007,7 +1010,8 @@ code {
   .accounting-grid,
   .console-accounting,
   .split-section { grid-template-columns: 1fr; }
-  .lp-grid .reserves-panel { grid-column: auto; grid-row: auto; }
+  .lp-grid .reserves-panel,
+  .lp-grid .lp-positions-panel { grid-column: auto; grid-row: auto; }
   .operator-stats { grid-template-columns: 1fr; }
   .console-shell { grid-template-columns: 1fr; }
   .console-sidebar { min-height: auto; position: static; }

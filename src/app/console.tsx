@@ -181,7 +181,7 @@ export function ConsoleApp(props: ConsoleAppProps) {
           <ActionTransactionPanel state={actionTx} />
 
           {activeView === "lp" ? (
-            <LiquidityProvisionView dashboard={dashboard} utilization={utilization} vaultReady={vaultReady} busy={busy} supplyTx={supplyTx} onDeposit={onDeposit} />
+            <LiquidityProvisionView dashboard={dashboard} utilization={utilization} vaultReady={vaultReady} busy={busy} supplyTx={supplyTx} claimableFees={claimableFees} onDeposit={onDeposit} onWithdrawPosition={onWithdrawPosition} onClaimFees={onClaimFees} />
           ) : activeView === "merchant" ? (
             <MerchantTerminalView dashboard={dashboard} busy={busy} quote={quote} fiberRpcConfigured={fiberRpcConfigured} onRequest={onRequest} onOpenFiberChannel={onOpenFiberChannel} />
           ) : activeView === "operator" ? (
@@ -224,13 +224,16 @@ function ConsoleSidebar({ activeView, status, onViewChange }: { activeView: Cons
   );
 }
 
-function LiquidityProvisionView({ dashboard, utilization, vaultReady, busy, supplyTx, onDeposit }: {
+function LiquidityProvisionView({ dashboard, utilization, vaultReady, busy, supplyTx, claimableFees, onDeposit, onWithdrawPosition, onClaimFees }: {
   dashboard: Dashboard;
   utilization: number;
   vaultReady: boolean;
   busy: string | null;
   supplyTx: SupplyTxState | null;
+  claimableFees: number;
   onDeposit: (event: FormEvent<HTMLFormElement>) => void;
+  onWithdrawPosition: (id: string) => void;
+  onClaimFees: (id: string) => void;
 }) {
   const vault = dashboard.vault;
   return (
@@ -266,6 +269,8 @@ function LiquidityProvisionView({ dashboard, utilization, vaultReady, busy, supp
         <SupplyTransactionPanel state={supplyTx} />
       </section>
 
+      <LpPositionsPanel dashboard={dashboard} claimableFees={claimableFees} busy={busy} onWithdrawPosition={onWithdrawPosition} onClaimFees={onClaimFees} />
+
       <section className="console-panel reserves-panel">
         <div className="panel-title split-title">
           <div>
@@ -277,6 +282,60 @@ function LiquidityProvisionView({ dashboard, utilization, vaultReady, busy, supp
         <ReserveTable dashboard={dashboard} />
       </section>
     </div>
+  );
+}
+
+function LpPositionsPanel({ dashboard, claimableFees, busy, onWithdrawPosition, onClaimFees }: {
+  dashboard: Dashboard;
+  claimableFees: number;
+  busy: string | null;
+  onWithdrawPosition: (id: string) => void;
+  onClaimFees: (id: string) => void;
+}) {
+  return (
+    <section className="console-panel lp-positions-panel">
+      <div className="panel-title split-title">
+        <div>
+          <h2>Your Vault Positions</h2>
+          <p>Withdraw available liquidity or claim earned fees from receipt-backed positions.</p>
+        </div>
+        <span className="count-pill">{dashboard.positions.length} active</span>
+      </div>
+      <div className="position-list lp-position-list">
+        {dashboard.positions.length ? dashboard.positions.map((position) => {
+          const claimable = Math.max(position.fees_earned - position.fees_claimed, 0);
+          return (
+            <div className="position-card lp-position-card" key={position.id}>
+              <div className="position-main">
+                <span className="icon"><ReceiptText size={18} /></span>
+                <div>
+                  <strong>{position.lp_name}</strong>
+                  <span>{assetAmount(position.supplied_amount, position.asset)} supplied</span>
+                  <code>{shortId(position.receipt_cell_id)}</code>
+                </div>
+              </div>
+              <div className="position-metrics">
+                <Metric label="Available" value={assetAmount(position.available_amount, position.asset)} />
+                <Metric label="Reserved" value={assetAmount(position.reserved_amount, position.asset)} />
+                <Metric label="Deployed" value={assetAmount(position.deployed_amount, position.asset)} />
+                <Metric label="Claimable" value={assetAmount(claimable, position.asset)} />
+              </div>
+              <div className="position-footer">
+                <span className="status-tag" data-status={position.status}>{statusLabel(position.status)}</span>
+                <TxMiniLink txHash={position.supply_tx_hash} label="Supply tx" />
+                <button type="button" className="gold-button small" onClick={() => onWithdrawPosition(position.id)} disabled={busy === `withdraw-${position.id}` || position.available_amount <= 0}>
+                  {busy === `withdraw-${position.id}` ? <Loader2 className="spin" size={14} /> : <ArrowRight size={14} />} Withdraw
+                </button>
+                <button type="button" className="ghost-button small" onClick={() => onClaimFees(position.id)} disabled={busy === `claim-${position.id}` || claimable <= 0}>
+                  {busy === `claim-${position.id}` ? <Loader2 className="spin" size={14} /> : <Banknote size={14} />} Claim
+                </button>
+              </div>
+            </div>
+          );
+        }) : <EmptyState title="No LP positions yet" text="Supply liquidity to mint a receipt-backed vault position, then withdrawals will appear here." />}
+      </div>
+      <p className="muted compact-note">{assetAmount(claimableFees, dashboard.vault.asset)} fees are currently claimable across your visible LP positions.</p>
+    </section>
   );
 }
 
@@ -301,6 +360,7 @@ function MerchantTerminalView({ dashboard, busy, quote, fiberRpcConfigured, onRe
         </div>
         <form className="stack-form console-form" onSubmit={onRequest}>
           <label>Fiber peer pubkey<input name="fiber_peer_pubkey" placeholder="02..." /></label>
+          <label>Fiber peer address<input name="fiber_peer_address" placeholder="/ip4/.../tcp/8228/p2p/..." /></label>
           <label>Requested capacity<input name="amount" type="number" min="1" placeholder="10000" required /></label>
           <div className="form-row">
             <label>Asset<input name="asset" value={vault.asset} readOnly required /></label>
@@ -481,6 +541,7 @@ function RequestQueue({ requests, busy, canOpen, fiberRpcConfigured = true, onOp
               <strong>{assetAmount(request.amount, request.asset)}</strong>
               <span>{request.merchant_name} - {request.duration_days} days</span>
               {request.fiber_peer_pubkey ? <code>Peer: {shortPubkey(request.fiber_peer_pubkey)}</code> : <span>No Fiber peer attached</span>}
+              {request.fiber_peer_address ? <code>Address: {shortFiberAddress(request.fiber_peer_address)}</code> : null}
               <code>Request: {shortId(request.request_cell_id)}</code>
               {request.request_tx_hash ? <TxMiniLink txHash={request.request_tx_hash} label="Request tx" /> : null}
               {request.fiber_error ? <span className="error-text">{request.fiber_error}</span> : null}
@@ -518,6 +579,7 @@ function FiberOperationList({ requests }: { requests: LiquidityRequest[] }) {
                 <strong>{request.status === "channel_open" ? "Channel open" : request.status === "pending_fiber_channel" ? "Opening" : "Open failed"}</strong>
                 <span>{assetAmount(request.amount, request.asset)} for {request.merchant_name}</span>
                 {request.fiber_peer_pubkey ? <code>Peer: {shortPubkey(request.fiber_peer_pubkey)}</code> : null}
+                {request.fiber_peer_address ? <code>Address: {shortFiberAddress(request.fiber_peer_address)}</code> : null}
                 {channelRef ? <code>Fiber ref: {shortHash(channelRef)}</code> : null}
                 {request.request_tx_hash ? <TxMiniLink txHash={request.request_tx_hash} label="Request tx" /> : null}
                 {request.fiber_note ? <span>{request.fiber_note}</span> : null}
@@ -820,6 +882,12 @@ function shortPubkey(pubkey: string) {
   const clean = pubkey.startsWith("0x") ? pubkey.slice(2) : pubkey;
   if (clean.length <= 18) return pubkey;
   return `${clean.slice(0, 10)}...${clean.slice(-8)}`;
+}
+
+function shortFiberAddress(address: string) {
+  if (address.length <= 34) return address;
+  const peer = address.split("/p2p/")[1] ?? address;
+  return `/p2p/${peer.slice(0, 10)}...${peer.slice(-8)}`;
 }
 
 function serviceLabel(role: Role) {
