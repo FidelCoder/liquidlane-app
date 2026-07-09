@@ -374,7 +374,6 @@ export default function Home() {
   const [ckbAddress, setCkbAddress] = useState<string | null>(null);
   const [selectedRole, setSelectedRole] = useState<Role | null>(null);
   const [activeView, setActiveView] = useState<ConsoleView>("lp");
-  const [displayName, setDisplayName] = useState("");
   const [fiberRpcConfigured, setFiberRpcConfigured] = useState(false);
   const [coreHealth, setCoreHealth] = useState<HealthStatus | null>(null);
   const [status, setStatus] = useState("Connect a CKB wallet to choose a LiquidLane service.");
@@ -546,7 +545,6 @@ export default function Home() {
           wallet_type: activeWallet.walletType,
           role,
           lock_script: activeWallet.lockScript,
-          display_name: displayName.trim() || undefined,
         }),
       });
       if (!connectResponse.ok) {
@@ -624,6 +622,46 @@ export default function Home() {
       if (Array.isArray(diagnostics)) return diagnostics.filter((item): item is string => typeof item === "string");
     }
     return undefined;
+  }
+
+  function applyWithdrawalSnapshot(position: LpPosition, amount: number, txHash: string) {
+    const now = new Date().toISOString();
+    setDashboard((current) => {
+      if (!current) return current;
+      const positions = current.positions.map((item) => {
+        if (item.id !== position.id) return item;
+        const nextSupplied = Math.max(item.supplied_amount - amount, 0);
+        const nextAvailable = Math.max(item.available_amount - amount, 0);
+        const shouldClose = nextSupplied === 0 && item.reserved_amount === 0 && item.deployed_amount === 0;
+        return {
+          ...item,
+          supplied_amount: nextSupplied,
+          available_amount: nextAvailable,
+          status: shouldClose ? "closed" : item.status,
+          updated_at: now,
+        };
+      });
+      const vault = {
+        ...current.vault,
+        total_deposits: Math.max(current.vault.total_deposits - amount, 0),
+        available_liquidity: Math.max(current.vault.available_liquidity - amount, 0),
+      };
+      return {
+        ...current,
+        vault,
+        positions,
+        activity: [
+          {
+            id: `local-withdrawal-${txHash}`,
+            label: `${position.lp_name} withdrew vault liquidity`,
+            amount,
+            asset: position.asset,
+            created_at: now,
+          },
+          ...current.activity.filter((event) => event.id !== `local-withdrawal-${txHash}`),
+        ],
+      };
+    });
   }
 
 
@@ -1112,18 +1150,20 @@ export default function Home() {
     return activeWallet;
   }
 
-  async function withdrawPosition(positionId: string) {
+  async function withdrawPosition(positionId: string, requestedAmount?: number) {
     const position = dashboard?.positions.find((item) => item.id === positionId);
     if (!position) return setStatus("LP position was not found.");
     if (position.available_amount <= 0) return setStatus("This LP position has no available liquidity to withdraw.");
-    const amount = position.available_amount;
+    const amount = requestedAmount ?? position.available_amount;
+    if (!Number.isFinite(amount) || amount <= 0) return setStatus("Enter a valid withdrawal amount.");
+    if (amount > position.available_amount) return setStatus(`Only ${assetAmount(position.available_amount, position.asset)} is available from the selected receipt.`);
     const asset = position.asset;
     setBusy(`withdraw-${positionId}`);
     writeActionTx({
       status: "running",
       action: "withdraw",
       title: "Preparing withdrawal",
-      message: "Core is creating a withdrawal intent for the available LP receipt balance.",
+      message: "Core is creating a withdrawal intent for the requested vault amount.",
       amount,
       asset,
     });
@@ -1175,18 +1215,19 @@ export default function Home() {
           signed_tx: signed.tx,
         }),
       });
+      applyWithdrawalSnapshot(position, amount, signed.txHash);
       writeActionTx({
         status: "success",
         action: "withdraw",
-        title: "Withdrawal submitted",
-        message: `${assetAmount(amount, asset)} was broadcast back to your wallet and settled in Core.`,
+        title: "Withdrawal confirmed",
+        message: `${assetAmount(amount, asset)} was returned to your wallet and the vault position was refreshed.`,
         amount,
         asset,
         txHash: signed.txHash,
         explorerUrl,
       });
+      await refresh(token);
       setStatus(`Withdrawal broadcast ${shortHash(signed.txHash)} and settled in Core.`);
-      await refresh();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Withdrawal failed.";
       showJoyIdPopupStatus(popup, "Withdrawal failed", message);
@@ -1553,9 +1594,6 @@ export default function Home() {
                 <p className="eyebrow">{service.kicker}</p>
                 <h3>{service.title}</h3>
                 <p>{service.description}</p>
-                {wallet && !dashboard ? (
-                  <label>Display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Atlas LP" /></label>
-                ) : null}
                 <button type="button" onClick={() => enterService(service.role)} disabled={busy === service.role}>
                   {busy === service.role ? <Loader2 className="spin" size={16} /> : <Sparkles size={16} />} {actionLabel}
                 </button>

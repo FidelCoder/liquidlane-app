@@ -1,6 +1,6 @@
 "use client";
 
-import type { FormEvent } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   ArrowRight,
@@ -26,7 +26,6 @@ import {
   Store,
   TerminalSquare,
   UserRound,
-  Wifi,
 } from "lucide-react";
 import type {
   ActionTxState,
@@ -69,7 +68,7 @@ export type ConsoleAppProps = {
   onDeposit: (event: FormEvent<HTMLFormElement>) => void;
   onRequest: (event: FormEvent<HTMLFormElement>) => void;
   onOpenFiberChannel: (id: string) => void;
-  onWithdrawPosition: (id: string) => void;
+  onWithdrawPosition: (id: string, amount?: number) => void;
   onClaimFees: (id: string) => void;
 };
 
@@ -124,7 +123,6 @@ export function ConsoleApp(props: ConsoleAppProps) {
 
   return (
     <main className="console-shell">
-      <ConsoleSidebar activeView={activeView} status={status} onViewChange={onViewChange} />
       <section className="console-main">
         <header className="console-topbar">
           <div className="console-titlebar">
@@ -134,6 +132,7 @@ export function ConsoleApp(props: ConsoleAppProps) {
               <strong>{title}</strong>
             </div>
           </div>
+          <ConsoleTabs activeView={activeView} onViewChange={onViewChange} />
           <div className="console-actions">
             <a href="https://github.com/FidelCoder/liquidlane-core/blob/main/README.md" target="_blank" rel="noreferrer" aria-label="Open LiquidLane docs"><HelpCircle size={18} /></a>
             <button type="button" aria-label="Sync dashboard" onClick={() => onRefresh()} disabled={loading}>
@@ -171,6 +170,7 @@ export function ConsoleApp(props: ConsoleAppProps) {
                 <span>Fiber RPC {fiberRpcConfigured ? "configured" : "missing"}</span>
                 <span>Beta {betaReady ? "ready" : "warming"}</span>
                 <span>Synced {new Intl.DateTimeFormat("en-US", { hour: "2-digit", minute: "2-digit" }).format(new Date())}</span>
+                <span>{status.length > 48 ? `${status.slice(0, 48)}...` : status}</span>
               </div>
             </div>
             <div className="console-hero-actions">
@@ -181,7 +181,7 @@ export function ConsoleApp(props: ConsoleAppProps) {
           <ActionTransactionPanel state={actionTx} />
 
           {activeView === "lp" ? (
-            <LiquidityProvisionView dashboard={dashboard} utilization={utilization} vaultReady={vaultReady} busy={busy} supplyTx={supplyTx} claimableFees={claimableFees} onDeposit={onDeposit} onWithdrawPosition={onWithdrawPosition} onClaimFees={onClaimFees} />
+            <LiquidityProvisionView dashboard={dashboard} utilization={utilization} vaultReady={vaultReady} busy={busy} supplyTx={supplyTx} actionTx={actionTx} claimableFees={claimableFees} onDeposit={onDeposit} onWithdrawPosition={onWithdrawPosition} onClaimFees={onClaimFees} />
           ) : activeView === "merchant" ? (
             <MerchantTerminalView dashboard={dashboard} busy={busy} quote={quote} fiberRpcConfigured={fiberRpcConfigured} onRequest={onRequest} onOpenFiberChannel={onOpenFiberChannel} />
           ) : activeView === "operator" ? (
@@ -195,44 +195,32 @@ export function ConsoleApp(props: ConsoleAppProps) {
   );
 }
 
-function ConsoleSidebar({ activeView, status, onViewChange }: { activeView: ConsoleView; status: string; onViewChange: (view: ConsoleView) => void }) {
+function ConsoleTabs({ activeView, onViewChange }: { activeView: ConsoleView; onViewChange: (view: ConsoleView) => void }) {
   return (
-    <aside className="console-sidebar">
-      <a className="console-brand" href="#services" aria-label="LiquidLane home">
-        <span>LiquidLane</span>
-        <small>Management Lifecycle</small>
-      </a>
-      <nav className="console-nav" aria-label="LiquidLane services">
-        {consoleItems.map((item) => {
-          const Icon = item.icon;
-          return (
-            <button key={item.view} type="button" data-active={activeView === item.view} onClick={() => onViewChange(item.view)}>
-              <Icon size={20} />
-              <span>{item.label}<small>{item.detail}</small></span>
-            </button>
-          );
-        })}
-      </nav>
-      <div className="lane-status">
-        <span className="orb"><Wifi size={18} /></span>
-        <div>
-          <strong>Fiber Lane Status</strong>
-          <span><i /> {status.length > 42 ? `${status.slice(0, 42)}...` : status}</span>
-        </div>
-      </div>
-    </aside>
+    <nav className="console-tabs" aria-label="LiquidLane services">
+      {consoleItems.map((item) => {
+        const Icon = item.icon;
+        return (
+          <button key={item.view} type="button" data-active={activeView === item.view} onClick={() => onViewChange(item.view)}>
+            <Icon size={16} />
+            <span>{item.label}</span>
+          </button>
+        );
+      })}
+    </nav>
   );
 }
 
-function LiquidityProvisionView({ dashboard, utilization, vaultReady, busy, supplyTx, claimableFees, onDeposit, onWithdrawPosition, onClaimFees }: {
+function LiquidityProvisionView({ dashboard, utilization, vaultReady, busy, supplyTx, actionTx, claimableFees, onDeposit, onWithdrawPosition, onClaimFees }: {
   dashboard: Dashboard;
   utilization: number;
   vaultReady: boolean;
   busy: string | null;
   supplyTx: SupplyTxState | null;
+  actionTx: ActionTxState | null;
   claimableFees: number;
   onDeposit: (event: FormEvent<HTMLFormElement>) => void;
-  onWithdrawPosition: (id: string) => void;
+  onWithdrawPosition: (id: string, amount?: number) => void;
   onClaimFees: (id: string) => void;
 }) {
   const vault = dashboard.vault;
@@ -269,7 +257,7 @@ function LiquidityProvisionView({ dashboard, utilization, vaultReady, busy, supp
         <SupplyTransactionPanel state={supplyTx} />
       </section>
 
-      <LpPositionsPanel dashboard={dashboard} claimableFees={claimableFees} busy={busy} onWithdrawPosition={onWithdrawPosition} onClaimFees={onClaimFees} />
+      <VaultWithdrawalPanel dashboard={dashboard} claimableFees={claimableFees} busy={busy} actionTx={actionTx} onWithdrawPosition={onWithdrawPosition} onClaimFees={onClaimFees} />
 
       <section className="console-panel reserves-panel">
         <div className="panel-title split-title">
@@ -285,56 +273,87 @@ function LiquidityProvisionView({ dashboard, utilization, vaultReady, busy, supp
   );
 }
 
-function LpPositionsPanel({ dashboard, claimableFees, busy, onWithdrawPosition, onClaimFees }: {
+function VaultWithdrawalPanel({ dashboard, claimableFees, busy, actionTx, onWithdrawPosition, onClaimFees }: {
   dashboard: Dashboard;
   claimableFees: number;
   busy: string | null;
-  onWithdrawPosition: (id: string) => void;
+  actionTx: ActionTxState | null;
+  onWithdrawPosition: (id: string, amount?: number) => void;
   onClaimFees: (id: string) => void;
 }) {
+  const [amount, setAmount] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
+  const withdrawablePositions = useMemo(
+    () => dashboard.positions
+      .filter((position) => position.status === "active" && position.available_amount > 0)
+      .sort((a, b) => a.available_amount - b.available_amount),
+    [dashboard.positions],
+  );
+  const totalAvailable = withdrawablePositions.reduce((sum, position) => sum + position.available_amount, 0);
+  const largestSingleReceipt = withdrawablePositions.reduce((max, position) => Math.max(max, position.available_amount), 0);
+  const claimablePosition = dashboard.positions.find((position) => position.fees_earned > position.fees_claimed);
+  const withdrawalRunning = Boolean(busy?.startsWith("withdraw-") || (actionTx?.action === "withdraw" && actionTx.status === "running"));
+  const withdrawalSuccess = actionTx?.action === "withdraw" && actionTx.status === "success";
+
+  useEffect(() => {
+    if (!withdrawalSuccess) return;
+    setAmount("");
+    setFormError(null);
+  }, [withdrawalSuccess, actionTx?.txHash]);
+
+  function submitWithdrawal(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const requestedAmount = Math.trunc(Number(amount));
+    if (!Number.isFinite(requestedAmount) || requestedAmount <= 0) {
+      setFormError("Enter a valid CKB amount.");
+      return;
+    }
+    const position = withdrawablePositions.find((item) => item.available_amount >= requestedAmount);
+    if (!position) {
+      setFormError(`Largest single withdrawal available is ${assetAmount(largestSingleReceipt, dashboard.vault.asset)}.`);
+      return;
+    }
+    setFormError(null);
+    onWithdrawPosition(position.id, requestedAmount);
+  }
+
   return (
-    <section className="console-panel lp-positions-panel">
+    <section className="console-panel vault-withdraw-panel">
       <div className="panel-title split-title">
         <div>
-          <h2>Your Vault Positions</h2>
-          <p>Withdraw available liquidity or claim earned fees from receipt-backed positions.</p>
+          <h2>Withdraw From Vault</h2>
+          <p>Available liquidity returns directly to the connected wallet.</p>
         </div>
-        <span className="count-pill">{dashboard.positions.length} active</span>
+        <span className="count-pill">{dashboard.positions.length} receipt{dashboard.positions.length === 1 ? "" : "s"}</span>
       </div>
-      <div className="position-list lp-position-list">
-        {dashboard.positions.length ? dashboard.positions.map((position) => {
-          const claimable = Math.max(position.fees_earned - position.fees_claimed, 0);
-          return (
-            <div className="position-card lp-position-card" key={position.id}>
-              <div className="position-main">
-                <span className="icon"><ReceiptText size={18} /></span>
-                <div>
-                  <strong>{position.lp_name}</strong>
-                  <span>{assetAmount(position.supplied_amount, position.asset)} supplied</span>
-                  <code>{shortId(position.receipt_cell_id)}</code>
-                </div>
-              </div>
-              <div className="position-metrics">
-                <Metric label="Available" value={assetAmount(position.available_amount, position.asset)} />
-                <Metric label="Reserved" value={assetAmount(position.reserved_amount, position.asset)} />
-                <Metric label="Deployed" value={assetAmount(position.deployed_amount, position.asset)} />
-                <Metric label="Claimable" value={assetAmount(claimable, position.asset)} />
-              </div>
-              <div className="position-footer">
-                <span className="status-tag" data-status={position.status}>{statusLabel(position.status)}</span>
-                <TxMiniLink txHash={position.supply_tx_hash} label="Supply tx" />
-                <button type="button" className="gold-button small" onClick={() => onWithdrawPosition(position.id)} disabled={busy === `withdraw-${position.id}` || position.available_amount <= 0}>
-                  {busy === `withdraw-${position.id}` ? <Loader2 className="spin" size={14} /> : <ArrowRight size={14} />} Withdraw
-                </button>
-                <button type="button" className="ghost-button small" onClick={() => onClaimFees(position.id)} disabled={busy === `claim-${position.id}` || claimable <= 0}>
-                  {busy === `claim-${position.id}` ? <Loader2 className="spin" size={14} /> : <Banknote size={14} />} Claim
-                </button>
-              </div>
-            </div>
-          );
-        }) : <EmptyState title="No LP positions yet" text="Supply liquidity to mint a receipt-backed vault position, then withdrawals will appear here." />}
+      <div className="vault-balance-card">
+        <Metric label="Available to withdraw" value={assetAmount(totalAvailable, dashboard.vault.asset)} />
+        <Metric label="Max single withdrawal" value={assetAmount(largestSingleReceipt, dashboard.vault.asset)} />
+        <Metric label="Claimable fees" value={assetAmount(claimableFees, dashboard.vault.asset)} />
       </div>
-      <p className="muted compact-note">{assetAmount(claimableFees, dashboard.vault.asset)} fees are currently claimable across your visible LP positions.</p>
+      {withdrawalSuccess ? (
+        <div className="withdraw-success-card" role="status">
+          <CheckCircle2 size={22} />
+          <div>
+            <strong>Withdrawal complete</strong>
+            <span>{actionTx.amount && actionTx.asset ? `${assetAmount(actionTx.amount, actionTx.asset)} returned to your wallet.` : "Vault balance refreshed from Core."}</span>
+            {actionTx.txHash ? <TxMiniLink txHash={actionTx.txHash} label="Withdrawal tx" /> : null}
+          </div>
+        </div>
+      ) : null}
+      <form className="stack-form console-form" onSubmit={submitWithdrawal}>
+        <label>Amount ({dashboard.vault.asset})<input value={amount} onChange={(event) => setAmount(event.target.value)} name="amount" type="number" min="1" step="1" max={largestSingleReceipt || undefined} placeholder={largestSingleReceipt ? String(largestSingleReceipt) : "0"} required /></label>
+        {formError ? <p className="form-error">{formError}</p> : null}
+        <div className="withdraw-actions">
+          <button type="button" className="ghost-button" onClick={() => setAmount(String(largestSingleReceipt))} disabled={!largestSingleReceipt || withdrawalRunning}>Max</button>
+          <button type="submit" className="gold-button" disabled={!largestSingleReceipt || withdrawalRunning}>
+            {withdrawalRunning ? <Loader2 className="spin" size={16} /> : withdrawalSuccess ? <CheckCircle2 size={16} /> : <ArrowRight size={16} />} {withdrawalSuccess ? "Withdraw Again" : "Withdraw"}
+          </button>
+        </div>
+      </form>
+      <button type="button" className="ghost-button claim-all-button" onClick={() => claimablePosition ? onClaimFees(claimablePosition.id) : undefined} disabled={!claimablePosition || busy?.startsWith("claim-")}>
+        {busy?.startsWith("claim-") ? <Loader2 className="spin" size={16} /> : <Banknote size={16} />} Claim fees
+      </button>
     </section>
   );
 }
@@ -467,7 +486,7 @@ function VaultStatsView({ dashboard, utilization, claimableFees, busy, onWithdra
   utilization: number;
   claimableFees: number;
   busy: string | null;
-  onWithdrawPosition: (id: string) => void;
+  onWithdrawPosition: (id: string, amount?: number) => void;
   onClaimFees: (id: string) => void;
 }) {
   const vault = dashboard.vault;
@@ -598,7 +617,7 @@ function AccountingPanels({ dashboard, claimableFees, busy, onWithdrawPosition, 
   dashboard: Dashboard;
   claimableFees: number;
   busy: string | null;
-  onWithdrawPosition: (id: string) => void;
+  onWithdrawPosition: (id: string, amount?: number) => void;
   onClaimFees: (id: string) => void;
 }) {
   return (

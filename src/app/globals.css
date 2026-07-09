@@ -350,8 +350,7 @@ code {
     linear-gradient(90deg, rgba(255, 255, 255, 0.034) 1px, transparent 1px),
     var(--ink);
   background-size: 48px 48px, 48px 48px, auto;
-  display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
+  display: block;
   min-height: 100vh;
 }
 .console-sidebar {
@@ -433,12 +432,14 @@ code {
 .console-main { min-width: 0; }
 .console-topbar {
   align-items: center;
-  background: #465061;
-  border-bottom: 1px solid #222b3d;
-  display: flex;
-  justify-content: space-between;
-  min-height: 80px;
-  padding: 0 28px;
+  backdrop-filter: blur(18px);
+  background: rgba(9, 15, 29, 0.94);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(220px, auto) minmax(0, 1fr) auto;
+  min-height: 78px;
+  padding: 12px 28px;
   position: sticky;
   top: 0;
   z-index: 10;
@@ -447,8 +448,38 @@ code {
 .console-titlebar > svg { color: var(--teal); }
 .console-titlebar div { display: grid; gap: 2px; }
 .console-titlebar span { color: #f1dabc; font-size: 0.84rem; font-weight: 800; }
-.console-titlebar strong { font-size: 1.55rem; }
-.console-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 12px; justify-content: flex-end; }
+.console-titlebar strong { font-size: 1.45rem; }
+.console-tabs {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.console-tabs::-webkit-scrollbar { display: none; }
+.console-tabs button {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  color: #d9d4cb;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 0.82rem;
+  font-weight: 850;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 12px;
+}
+.console-tabs button[data-active="true"] {
+  background: rgba(247, 184, 73, 0.14);
+  border-color: rgba(247, 184, 73, 0.42);
+  color: var(--gold);
+}
+.console-tabs button svg { color: currentColor; }
+.console-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; }
 .notification-dot { align-items: center; color: #e8dcc8; display: inline-flex; position: relative; }
 .notification-dot::after {
   background: var(--gold);
@@ -464,7 +495,7 @@ code {
   display: grid;
   gap: 24px;
   margin: 0 auto;
-  max-width: 1320px;
+  max-width: 1380px;
   padding: 28px;
 }
 .console-hero-strip {
@@ -480,9 +511,9 @@ code {
 .console-hero-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 12px; justify-content: flex-end; }
 
 .console-grid { display: grid; gap: 28px; }
-.lp-grid { grid-template-columns: 386px minmax(0, 1fr); }
-.lp-grid .reserves-panel { grid-column: 2; grid-row: 1 / span 2; }
-.lp-grid .lp-positions-panel { grid-column: 1 / -1; }
+.lp-grid { align-items: start; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.lp-grid .reserves-panel { grid-column: 1 / -1; grid-row: auto; }
+.vault-withdraw-panel { align-self: start; }
 .merchant-grid { grid-template-columns: minmax(360px, 0.72fr) minmax(360px, 0.5fr); }
 .operator-layout,
 .vault-layout { display: grid; gap: 24px; }
@@ -533,6 +564,58 @@ code {
 .form-meter { grid-template-columns: minmax(0, 1fr) auto; }
 .form-meter > div { grid-column: 1 / -1; }
 .supply-console-card { align-self: start; }
+.vault-balance-card {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.vault-balance-card div {
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+}
+.vault-balance-card span { color: var(--muted); font-size: 0.82rem; }
+.vault-balance-card strong { color: var(--text); font-size: 1.05rem; overflow-wrap: anywhere; }
+.withdraw-success-card {
+  align-items: flex-start;
+  background: linear-gradient(135deg, rgba(32, 214, 173, 0.14), rgba(247, 184, 73, 0.08));
+  border: 1px solid rgba(32, 214, 173, 0.34);
+  border-radius: 6px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: auto minmax(0, 1fr);
+  margin-bottom: 16px;
+  padding: 14px;
+}
+.withdraw-success-card > svg {
+  color: var(--teal);
+  margin-top: 2px;
+}
+.withdraw-success-card div { display: grid; gap: 6px; min-width: 0; }
+.withdraw-success-card strong { color: var(--text); font-size: 0.98rem; }
+.withdraw-success-card span { color: #d7eadf; font-size: 0.9rem; line-height: 1.4; }
+.withdraw-success-card .tx-mini-link { justify-self: start; }
+.withdraw-actions {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 96px minmax(0, 1fr);
+}
+.withdraw-actions button,
+.claim-all-button { justify-content: center; width: 100%; }
+.claim-all-button { margin-top: 12px; }
+.form-error {
+  background: rgba(242, 139, 130, 0.1);
+  border: 1px solid rgba(242, 139, 130, 0.24);
+  border-radius: 4px;
+  color: var(--red);
+  font-size: 0.86rem;
+  line-height: 1.35;
+  margin: 0;
+  padding: 10px 12px;
+}
 
 .reserve-table,
 .request-queue,
@@ -1013,10 +1096,9 @@ code {
   .lp-grid .reserves-panel,
   .lp-grid .lp-positions-panel { grid-column: auto; grid-row: auto; }
   .operator-stats { grid-template-columns: 1fr; }
-  .console-shell { grid-template-columns: 1fr; }
-  .console-sidebar { min-height: auto; position: static; }
-  .console-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 22px; }
-  .lane-status { margin-top: 22px; }
+  .lp-grid { grid-template-columns: 1fr; }
+  .console-topbar { grid-template-columns: 1fr; }
+  .console-tabs { justify-content: flex-start; }
   .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 760px) {
@@ -1054,9 +1136,8 @@ code {
   .table-panel,
   .operation-panel,
   .deployment-card { padding: 20px; }
-  .console-sidebar { padding: 20px 16px; }
   .console-topbar { padding: 16px; }
-  .console-nav { grid-template-columns: 1fr; }
+  .console-tabs { width: 100%; }
   .console-hero-strip h1 { font-size: 2.5rem; }
   .reserve-head { display: none; }
   .reserve-row,
@@ -1067,6 +1148,7 @@ code {
   .metric-grid,
   .position-metrics,
   .quote-strip,
+  .withdraw-actions,
   .deployment-mini { grid-template-columns: 1fr; }
   .position-footer,
   .state-row { align-items: flex-start; flex-direction: column; }

@@ -79,6 +79,7 @@ type RpcCell = {
 };
 
 type RpcLiveCell = RpcCell & {
+  output_data?: string;
   out_point: { tx_hash: string; index: string };
 };
 
@@ -120,9 +121,10 @@ export async function withdrawVaultLiquidity(
   reportProgress(options, popup, "funding", "Selecting a JoyID cell to pay network fees.");
   const funding = selectFunding(await collectFundingCells(userLock), requiredFunding);
   const unsignedTx = buildWithdrawalTx({ amount, funding, userLock, vaultCell, receiptCell, payoutCapacity, hasReceiptOutput, minChangeCapacity, scripts });
+  const joyIdWitnessIndexes = settlementJoyIdWitnessIndexes(funding.inputs.length);
   reportProgress(options, popup, "signing", "Review the withdrawal in JoyID and confirm.");
-  const signedTx = await signRawCkbTransaction(wallet, unsignedTx, [0], popup);
-  assertJoyIdSignedWitness(unsignedTx, signedTx, [0]);
+  const signedTx = await signRawCkbTransaction(wallet, unsignedTx, joyIdWitnessIndexes, popup);
+  assertJoyIdSignedWitness(unsignedTx, signedTx, joyIdWitnessIndexes);
   reportProgress(options, popup, "verify", "Dry-running the withdrawal before broadcast.");
   await dryRunCkbTransaction(signedTx);
   reportProgress(options, popup, "broadcast", "Broadcasting the verified withdrawal.");
@@ -156,9 +158,10 @@ export async function claimVaultFees(
   reportProgress(options, popup, "funding", "Selecting a JoyID cell to create the fee claim receipt.");
   const funding = selectFunding(await collectFundingCells(userLock), requiredFunding);
   const unsignedTx = buildFeeClaimTx({ amount, funding, userLock, vaultCell, receiptCell, claimType, claimCapacity, minChangeCapacity, scripts });
+  const joyIdWitnessIndexes = settlementJoyIdWitnessIndexes(funding.inputs.length);
   reportProgress(options, popup, "signing", "Review the fee claim in JoyID and confirm.");
-  const signedTx = await signRawCkbTransaction(wallet, unsignedTx, [0], popup);
-  assertJoyIdSignedWitness(unsignedTx, signedTx, [0]);
+  const signedTx = await signRawCkbTransaction(wallet, unsignedTx, joyIdWitnessIndexes, popup);
+  assertJoyIdSignedWitness(unsignedTx, signedTx, joyIdWitnessIndexes);
   reportProgress(options, popup, "verify", "Dry-running the fee claim before broadcast.");
   await dryRunCkbTransaction(signedTx);
   reportProgress(options, popup, "broadcast", "Broadcasting the verified fee claim.");
@@ -248,6 +251,10 @@ function baseTx(
   };
 }
 
+function settlementJoyIdWitnessIndexes(fundingInputCount: number) {
+  return Array.from({ length: fundingInputCount + 1 }, (_, index) => index);
+}
+
 function vaultOutput(cell: VaultCell, capacity: bigint) {
   return { capacity: toHex(capacity), lock: cell.lock, type: cell.type };
 }
@@ -279,6 +286,7 @@ async function collectFundingCells(lock: JoyScript): Promise<FundingCell[]> {
     const result: GetCellsResponse = await callCkbRpc<GetCellsResponse>("get_cells", getCellsParams(lock, cursor));
     for (const cell of result.objects) {
       if (cell.output.type) continue;
+      if ((cell.output_data ?? "0x") !== "0x") continue;
       cells.push({ previousOutput: { txHash: cell.out_point.tx_hash, index: cell.out_point.index }, since: "0x0", capacity: BigInt(cell.output.capacity) });
     }
     if (!result.last_cursor || result.last_cursor === cursor || result.objects.length === 0) break;
@@ -304,7 +312,17 @@ function selectFunding(cells: FundingCell[], required: bigint) {
 function toInput(cell: FundingCell): TxInput { return { previousOutput: cell.previousOutput, since: cell.since }; }
 
 function getCellsParams(lock: JoyScript, cursor: string | null): unknown[] {
-  const params: unknown[] = [{ script: toRpcScript(lock), script_type: "lock", filter: { output_data_len_range: ["0x0", "0x1"] } }, "asc", "0x64"];
+  const params: unknown[] = [
+    {
+      script: toRpcScript(lock),
+      script_type: "lock",
+      script_search_mode: "exact",
+      filter: { output_data_len_range: ["0x0", "0x1"] },
+      with_data: true,
+    },
+    "asc",
+    "0x64",
+  ];
   if (cursor) params.push(cursor);
   return params;
 }
