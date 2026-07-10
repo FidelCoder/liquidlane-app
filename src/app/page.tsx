@@ -1009,12 +1009,14 @@ export default function Home() {
     const durationDays = Number(form.get("duration_days"));
     const asset = String(form.get("asset") ?? DEFAULT_ASSET).trim().toUpperCase();
     const safeAmount = Number.isFinite(amount) ? amount : undefined;
+    const fiberPeerPubkey = blankToUndefined(form.get("fiber_peer_pubkey"));
+    const fiberPeerAddress = blankToUndefined(form.get("fiber_peer_address"));
     const payload = {
       asset,
       amount,
       duration_days: durationDays,
-      fiber_peer_pubkey: blankToUndefined(form.get("fiber_peer_pubkey")),
-      fiber_peer_address: blankToUndefined(form.get("fiber_peer_address")),
+      fiber_peer_pubkey: fiberPeerPubkey,
+      fiber_peer_address: fiberPeerAddress,
     };
     const progressTitle: Record<RequestProgressStep, string> = {
       vault: "Checking vault",
@@ -1040,6 +1042,15 @@ export default function Home() {
       }
       if (!Number.isFinite(durationDays) || durationDays <= 0) {
         throw new Error("Request duration must be greater than zero.");
+      }
+      if (!isFiberPubkey(fiberPeerPubkey)) {
+        throw new Error("Enter the receiving Fiber node pubkey: a compressed 33-byte hex key starting with 02 or 03.");
+      }
+      if (looksLikeCkbAddress(fiberPeerAddress)) {
+        throw new Error("Fiber node address is not a CKB wallet address. Leave it blank, or enter a multiaddr like /ip4/203.0.113.10/tcp/8228/p2p/12D3...");
+      }
+      if (fiberPeerAddress && !isFiberMultiaddr(fiberPeerAddress)) {
+        throw new Error("Fiber node address must be a multiaddr ending in /p2p/<peer_id>, for example /ip4/203.0.113.10/tcp/8228/p2p/12D3...");
       }
       if (!activeVault?.configured || !activeVault.address?.trim()) {
         throw new Error("LiquidLane vault is not configured yet.");
@@ -1190,12 +1201,18 @@ export default function Home() {
       await refresh();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Capacity request failed.";
+      const isInputError = !signPopup && (
+        message.startsWith("Enter the receiving Fiber node pubkey") ||
+        message.startsWith("Fiber node address") ||
+        message.startsWith("Requested capacity") ||
+        message.startsWith("Request duration")
+      );
       showJoyIdPopupStatus(signPopup, "Request failed", message);
       writeActionTx({
         status: "failed",
         action: "request",
-        title: "Capacity request did not broadcast",
-        message: "No request cell was accepted unless this panel shows a transaction hash.",
+        title: isInputError ? "Check Fiber request details" : "Capacity request did not broadcast",
+        message: isInputError ? "Nothing was sent. Use a Fiber pubkey and optional multiaddr, then reserve capacity again." : "No request cell was accepted unless this panel shows a transaction hash.",
         amount: safeAmount,
         asset,
         error: message,
@@ -1728,8 +1745,16 @@ export default function Home() {
                     <label>Amount<input name="amount" type="number" min="1" placeholder="10000" required /></label>
                     <label>Days<input name="duration_days" type="number" min="1" defaultValue="30" required /></label>
                   </div>
-                  <label>Fiber peer pubkey<input name="fiber_peer_pubkey" placeholder="02..." /></label>
-                  <label>Fiber peer address<input name="fiber_peer_address" placeholder="/ip4/.../tcp/8228/p2p/..." /></label>
+                  <label>
+                    Receiving Fiber pubkey
+                    <small className="field-help">Required. Use the receiving node compressed pubkey, starting with 02 or 03.</small>
+                    <input name="fiber_peer_pubkey" placeholder="02b6...be71" required />
+                  </label>
+                  <label>
+                    Fiber node multiaddr
+                    <small className="field-help">Optional. Not a CKB wallet address. Use /ip4/.../tcp/8228/p2p/&lt;peer_id&gt; only when the node is reachable.</small>
+                    <input name="fiber_peer_address" placeholder="/ip4/203.0.113.10/tcp/8228/p2p/12D3..." />
+                  </label>
                   <button type="submit" disabled={busy === "request"}>{busy === "request" ? <Loader2 className="spin" size={16} /> : <ArrowRight size={16} />} Quote + reserve</button>
                 </form>
               </article>
@@ -2138,6 +2163,20 @@ function statusMessage(request: LiquidityRequest) {
   if (request.status === "channel_open") return "Fiber channel is open.";
   if (request.status === "failed") return request.fiber_error ?? "Fiber channel open failed.";
   return "Capacity request reserved.";
+}
+
+function isFiberPubkey(pubkey: string | undefined) {
+  if (!pubkey) return false;
+  const raw = pubkey.startsWith("0x") ? pubkey.slice(2) : pubkey;
+  return /^(02|03)[0-9a-fA-F]{64}$/.test(raw);
+}
+
+function looksLikeCkbAddress(value: string | undefined) {
+  return Boolean(value && /^ck[bt]1[0-9a-z]+$/i.test(value));
+}
+
+function isFiberMultiaddr(value: string) {
+  return value.length <= 512 && value.startsWith("/") && value.includes("/p2p/") && !/\s/.test(value);
 }
 
 function blankToUndefined(value: FormDataEntryValue | null) {

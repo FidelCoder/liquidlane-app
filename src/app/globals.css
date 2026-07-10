@@ -443,6 +443,12 @@ code {
   padding: 0 14px;
   width: 100%;
 }
+.field-help {
+  color: #9facbf;
+  font-size: 0.78rem;
+  font-weight: 650;
+  line-height: 1.45;
+}
 .service-card button {
   align-self: end;
   margin-top: auto;
@@ -673,6 +679,22 @@ code {
 .panel-title { align-items: center; display: flex; gap: 14px; margin-bottom: 18px; }
 .panel-title > svg { color: var(--gold); }
 .panel-title h2 { margin-bottom: 4px; }
+.merchant-guidance {
+  align-items: flex-start;
+  background: rgba(247, 184, 73, 0.07);
+  border: 1px solid rgba(247, 184, 73, 0.2);
+  border-radius: 8px;
+  color: #f4e6cc;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 22px minmax(0, 1fr);
+  margin-bottom: 18px;
+  padding: 14px;
+}
+.merchant-guidance svg { color: var(--gold); margin-top: 2px; }
+.merchant-guidance div { display: grid; gap: 5px; }
+.merchant-guidance strong { color: #fff2cf; }
+.merchant-guidance span { color: #b9c4d8; line-height: 1.45; }
 .split-title { justify-content: space-between; }
 .console-form { margin-top: 0; }
 .stack-form { display: grid; gap: 14px; }

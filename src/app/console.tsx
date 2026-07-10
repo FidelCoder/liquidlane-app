@@ -617,18 +617,33 @@ function MerchantTerminalView({ dashboard, busy, quote, fiberRpcConfigured, onRe
           <Link2 size={22} />
           <div>
             <h2>Reserve Liquidity</h2>
-            <p>Queue a receive-capacity request against live vault liquidity.</p>
+            <p>Reserve receive capacity on-chain. Operators open the Fiber channel after it appears in the queue.</p>
+          </div>
+        </div>
+        <div className="merchant-guidance">
+          <HelpCircle size={18} />
+          <div>
+            <strong>Use Fiber node details, not a CKB wallet address.</strong>
+            <span>The pubkey is required. The multiaddr is optional and should look like /ip4/.../tcp/8228/p2p/&lt;peer_id&gt; when the node is reachable.</span>
           </div>
         </div>
         <form className="stack-form console-form" onSubmit={onRequest}>
-          <label>Fiber peer pubkey<input name="fiber_peer_pubkey" placeholder="02..." /></label>
-          <label>Fiber peer address<input name="fiber_peer_address" placeholder="/ip4/.../tcp/8228/p2p/..." /></label>
-          <label>Requested capacity<input name="amount" type="number" min="1" placeholder="10000" required /></label>
+          <label>
+            Receiving Fiber pubkey
+            <small className="field-help">Required. Compressed 33-byte node pubkey, starting with 02 or 03.</small>
+            <input name="fiber_peer_pubkey" placeholder="02b6...be71" required />
+          </label>
+          <label>
+            Fiber node multiaddr
+            <small className="field-help">Optional. Leave blank if you only have the pubkey. Never paste a ckt/ckb wallet address here.</small>
+            <input name="fiber_peer_address" placeholder="/ip4/203.0.113.10/tcp/8228/p2p/12D3..." />
+          </label>
+          <label>Requested capacity<input name="amount" type="number" min="1" placeholder="200" required /></label>
           <div className="form-row">
             <label>Asset<input name="asset" value={vault.asset} readOnly required /></label>
             <label>Days<input name="duration_days" type="number" min="1" defaultValue="30" required /></label>
           </div>
-          <button type="submit" className="gold-button" disabled={busy === "request"}>{busy === "request" ? <Loader2 className="spin" size={16} /> : <ArrowRight size={16} />} Initiate Channel Open</button>
+          <button type="submit" className="gold-button" disabled={busy === "request"}>{busy === "request" ? <Loader2 className="spin" size={16} /> : <ArrowRight size={16} />} Reserve capacity</button>
         </form>
         {quote ? (
           <div className="quote-strip">
