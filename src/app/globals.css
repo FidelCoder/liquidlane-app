@@ -1083,6 +1083,240 @@ code {
 .spin { animation: spin 800ms linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+
+/* LiquidLane console redesign */
+.console-shell {
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.034) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.034) 1px, transparent 1px),
+    radial-gradient(circle at 52% 18%, rgba(247, 184, 73, 0.06), transparent 30%),
+    var(--ink);
+  background-size: 50px 50px, 50px 50px, auto, auto;
+  display: grid;
+  grid-template-columns: 100px minmax(0, 1fr);
+  min-height: 100vh;
+}
+.console-rail {
+  align-items: center;
+  background: rgba(7, 14, 25, 0.88);
+  border-right: 1px solid rgba(247, 184, 73, 0.22);
+  display: flex;
+  flex-direction: column;
+  gap: 34px;
+  min-height: 100vh;
+  padding: 28px 18px;
+  position: sticky;
+  top: 0;
+  z-index: 12;
+}
+.rail-brand,
+.rail-menu button,
+.rail-control {
+  align-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #d8d0c1;
+  display: inline-flex;
+  height: 58px;
+  justify-content: center;
+  padding: 0;
+  width: 58px;
+}
+.rail-brand { color: var(--gold); height: 42px; width: 42px; }
+.rail-menu { display: grid; gap: 20px; margin-top: 18px; }
+.rail-menu button[data-active="true"] {
+  background: rgba(255, 255, 255, 0.11);
+  border-color: rgba(247, 184, 73, 0.32);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  color: var(--gold);
+}
+.rail-menu button:hover,
+.rail-control:hover { border-color: rgba(247, 184, 73, 0.28); color: var(--gold); }
+.rail-control { margin-top: auto; }
+.console-main { min-width: 0; }
+.console-topbar {
+  background: rgba(8, 15, 26, 0.96);
+  border-bottom: 1px solid rgba(247, 184, 73, 0.22);
+  grid-template-columns: minmax(210px, auto) minmax(0, 1fr) auto;
+  min-height: 80px;
+}
+.console-titlebar > svg { color: var(--gold); }
+.console-titlebar span { color: #e9dcc5; }
+.console-titlebar strong { font-size: 1.5rem; }
+.console-tabs { gap: 12px; }
+.console-tabs button {
+  background: transparent;
+  border-color: transparent;
+  border-radius: 8px;
+  color: #e0d7c8;
+  font-size: 0.88rem;
+  min-height: 56px;
+  padding: 0 22px;
+}
+.console-tabs button[data-active="true"] {
+  background: rgba(255, 255, 255, 0.075);
+  border-color: rgba(247, 184, 73, 0.36);
+  color: var(--gold);
+}
+.console-wallet {
+  border-color: rgba(247, 184, 73, 0.28);
+  min-height: 46px;
+  padding-left: 14px;
+}
+.console-content {
+  max-width: 1420px;
+  padding: 48px 60px 64px;
+}
+.console-hero-strip { align-items: flex-end; }
+.console-hero-strip h1 {
+  font-size: clamp(3rem, 5vw, 4.1rem);
+  letter-spacing: 0;
+  text-shadow: 0 3px 0 rgba(0, 0, 0, 0.34);
+}
+.console-health-row {
+  gap: 14px 18px;
+  margin-top: 30px;
+}
+.console-health-row span { color: #f0dfc7; font-size: 0.86rem; }
+.console-health-row span:nth-child(5) {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(247, 184, 73, 0.25);
+  border-radius: 4px;
+  padding: 4px 9px;
+}
+.lp-workspace {
+  display: grid;
+  gap: 44px;
+  margin-top: 12px;
+}
+.vault-action-card {
+  background: rgba(17, 24, 34, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.22);
+  display: grid;
+  gap: 28px;
+  justify-self: center;
+  max-width: 840px;
+  padding: 42px 40px;
+  width: min(840px, 100%);
+}
+.vault-card-topline {
+  color: #d7c6ad;
+  font-size: 0.86rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-align: center;
+  text-transform: uppercase;
+}
+.vault-card-balance {
+  align-items: baseline;
+  color: var(--gold);
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+}
+.vault-card-balance strong {
+  font-size: clamp(4.4rem, 9vw, 6.4rem);
+  line-height: 0.9;
+}
+.vault-card-balance span {
+  font-size: clamp(1.8rem, 4vw, 2.7rem);
+  font-weight: 900;
+}
+.vault-card-divider {
+  background: rgba(247, 184, 73, 0.34);
+  height: 1px;
+  width: 100%;
+}
+.vault-card-metrics {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.vault-card-metrics div {
+  background: rgba(255, 255, 255, 0.055);
+  border: 1px solid rgba(247, 184, 73, 0.18);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  min-height: 116px;
+  padding: 24px;
+  text-align: center;
+}
+.vault-card-metrics span { color: #e7dac7; }
+.vault-card-metrics strong { color: #e9eeff; font-size: 1.65rem; }
+.vault-card-metrics div:nth-child(2) strong { color: #60f0aa; }
+.vault-mode-switch {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.vault-mode-switch button {
+  align-items: center;
+  background: #303a45;
+  border: 1px solid rgba(247, 184, 73, 0.22);
+  border-radius: 8px;
+  color: #e9eeff;
+  display: inline-flex;
+  font-size: 1.08rem;
+  font-weight: 900;
+  gap: 10px;
+  justify-content: center;
+  min-height: 78px;
+}
+.vault-mode-switch button[data-active="true"] {
+  background: var(--gold);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: #080d18;
+}
+.vault-action-surface {
+  background: rgba(4, 10, 20, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 22px;
+}
+.vault-action-pane { display: grid; gap: 16px; }
+.compact-title { margin-bottom: 0; }
+.compact-title h2 { font-size: 1.35rem; }
+.panel-title-inline { align-items: center; display: flex; gap: 14px; min-width: 0; }
+.panel-title-inline > svg,
+.compact-title > svg { color: var(--gold); flex: 0 0 auto; }
+.withdraw-balance-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.vault-action-card .vault-balance-card { margin-bottom: 0; }
+.vault-action-card .claim-all-button { margin-top: 0; }
+.vault-action-card .action-transaction { margin-top: 0; }
+.lane-default-panel {
+  background: rgba(17, 24, 34, 0.9);
+  border-color: rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  justify-self: stretch;
+}
+.reserves-panel .empty-state {
+  align-items: center;
+  min-height: 200px;
+  text-align: center;
+}
+@media (max-width: 1180px) {
+  .console-shell { grid-template-columns: 76px minmax(0, 1fr); }
+  .console-rail { padding: 22px 10px; }
+  .rail-menu button,
+  .rail-control { height: 50px; width: 50px; }
+  .console-content { padding: 34px 28px 48px; }
+  .withdraw-balance-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 760px) {
+  .console-shell { display: block; }
+  .console-rail { display: none; }
+  .console-content { padding: 24px 16px 40px; }
+  .vault-action-card { padding: 26px 18px; }
+  .vault-card-metrics,
+  .vault-mode-switch { grid-template-columns: 1fr; }
+  .vault-card-metrics div { min-height: auto; }
+  .vault-action-surface { padding: 16px; }
+}
+
 @media (max-width: 1180px) {
   .landing-hero { padding: 0 28px; }
   .landing-content,

@@ -3,6 +3,7 @@
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
+  ArrowDownToLine,
   ArrowRight,
   ArrowUpRight,
   Banknote,
@@ -19,10 +20,12 @@ import {
   Link2,
   Loader2,
   LogOut,
+  PlusCircle,
   RadioTower,
   ReceiptText,
   Route,
   Settings,
+  SlidersHorizontal,
   Store,
   TerminalSquare,
   UserRound,
@@ -123,6 +126,7 @@ export function ConsoleApp(props: ConsoleAppProps) {
 
   return (
     <main className="console-shell">
+      <ConsoleRail activeView={activeView} onViewChange={onViewChange} />
       <section className="console-main">
         <header className="console-topbar">
           <div className="console-titlebar">
@@ -178,7 +182,7 @@ export function ConsoleApp(props: ConsoleAppProps) {
             </div>
           </section>
 
-          <ActionTransactionPanel state={actionTx} />
+          {activeView !== "lp" ? <ActionTransactionPanel state={actionTx} /> : null}
 
           {activeView === "lp" ? (
             <LiquidityProvisionView dashboard={dashboard} utilization={utilization} vaultReady={vaultReady} busy={busy} supplyTx={supplyTx} actionTx={actionTx} claimableFees={claimableFees} onDeposit={onDeposit} onWithdrawPosition={onWithdrawPosition} onClaimFees={onClaimFees} />
@@ -192,6 +196,29 @@ export function ConsoleApp(props: ConsoleAppProps) {
         </div>
       </section>
     </main>
+  );
+}
+
+function ConsoleRail({ activeView, onViewChange }: { activeView: ConsoleView; onViewChange: (view: ConsoleView) => void }) {
+  return (
+    <aside className="console-rail" aria-label="LiquidLane quick navigation">
+      <button type="button" className="rail-brand" onClick={() => onViewChange("lp")} aria-label="Liquidity Provision">
+        <Landmark size={22} />
+      </button>
+      <div className="rail-menu">
+        {consoleItems.map((item) => {
+          const Icon = item.icon;
+          return (
+            <button key={item.view} type="button" data-active={activeView === item.view} onClick={() => onViewChange(item.view)} aria-label={item.label} title={item.label}>
+              <Icon size={20} />
+            </button>
+          );
+        })}
+      </div>
+      <button type="button" className="rail-control" aria-label="Console settings" title="Console settings">
+        <SlidersHorizontal size={20} />
+      </button>
+    </aside>
   );
 }
 
@@ -223,43 +250,11 @@ function LiquidityProvisionView({ dashboard, utilization, vaultReady, busy, supp
   onWithdrawPosition: (id: string, amount?: number) => void;
   onClaimFees: (id: string) => void;
 }) {
-  const vault = dashboard.vault;
   return (
-    <div className="console-grid lp-grid">
-      <section className="stat-card primary-stat">
-        <span>Available Vault Capacity</span>
-        <strong>{assetAmount(vault.available_liquidity, vault.asset)}</strong>
-        <div className="stat-lines">
-          <Metric label="Total supplied" value={assetAmount(vault.total_deposits, vault.asset)} />
-          <Metric label="Yield accrued" value={assetAmount(vault.fees_earned, vault.asset)} />
-        </div>
-      </section>
+    <div className="lp-workspace">
+      <LiquidityVaultCard dashboard={dashboard} utilization={utilization} vaultReady={vaultReady} busy={busy} supplyTx={supplyTx} actionTx={actionTx} claimableFees={claimableFees} onDeposit={onDeposit} onWithdrawPosition={onWithdrawPosition} onClaimFees={onClaimFees} />
 
-      <section className="console-panel supply-console-card">
-        <div className="panel-title">
-          <CircleDollarSign size={22} />
-          <div>
-            <h2>Supply Liquidity</h2>
-            <p>Fund the active CKB vault and record an LP receipt.</p>
-          </div>
-        </div>
-        <form className="stack-form console-form" onSubmit={onDeposit}>
-          <label>Asset<input name="asset" value={vault.asset} readOnly required /></label>
-          <label>Amount ({vault.asset})<input name="amount" type="number" min="1" step="1" placeholder="100" required /></label>
-          <div className="form-meter">
-            <span>Channel utilization after supply</span>
-            <strong>{utilization}%</strong>
-            <div><i style={{ width: `${Math.max(utilization, 4)}%` }} /></div>
-          </div>
-          <button type="submit" className="gold-button" disabled={busy === "deposit" || !vaultReady}>{busy === "deposit" ? <Loader2 className="spin" size={16} /> : <Banknote size={16} />} Confirm Supply</button>
-        </form>
-        {vaultReady && vault.address ? <p className="muted compact-note">Active vault <code>{shortAddress(vault.address)}</code></p> : <p className="muted compact-note">Vault setup is pending on Core.</p>}
-        <SupplyTransactionPanel state={supplyTx} />
-      </section>
-
-      <VaultWithdrawalPanel dashboard={dashboard} claimableFees={claimableFees} busy={busy} actionTx={actionTx} onWithdrawPosition={onWithdrawPosition} onClaimFees={onClaimFees} />
-
-      <section className="console-panel reserves-panel">
+      <section className="console-panel reserves-panel lane-default-panel">
         <div className="panel-title split-title">
           <div>
             <h2>Active Channel Reserves</h2>
@@ -273,15 +268,21 @@ function LiquidityProvisionView({ dashboard, utilization, vaultReady, busy, supp
   );
 }
 
-function VaultWithdrawalPanel({ dashboard, claimableFees, busy, actionTx, onWithdrawPosition, onClaimFees }: {
+function LiquidityVaultCard({ dashboard, utilization, vaultReady, busy, supplyTx, actionTx, claimableFees, onDeposit, onWithdrawPosition, onClaimFees }: {
   dashboard: Dashboard;
-  claimableFees: number;
+  utilization: number;
+  vaultReady: boolean;
   busy: string | null;
+  supplyTx: SupplyTxState | null;
   actionTx: ActionTxState | null;
+  claimableFees: number;
+  onDeposit: (event: FormEvent<HTMLFormElement>) => void;
   onWithdrawPosition: (id: string, amount?: number) => void;
   onClaimFees: (id: string) => void;
 }) {
-  const [amount, setAmount] = useState("");
+  const vault = dashboard.vault;
+  const [mode, setMode] = useState<"supply" | "withdraw">("supply");
+  const [withdrawAmount, setWithdrawAmount] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const withdrawablePositions = useMemo(
     () => dashboard.positions
@@ -294,23 +295,25 @@ function VaultWithdrawalPanel({ dashboard, claimableFees, busy, actionTx, onWith
   const claimablePosition = dashboard.positions.find((position) => position.fees_earned > position.fees_claimed);
   const withdrawalRunning = Boolean(busy?.startsWith("withdraw-") || (actionTx?.action === "withdraw" && actionTx.status === "running"));
   const withdrawalSuccess = actionTx?.action === "withdraw" && actionTx.status === "success";
+  const settlementAction = actionTx?.action === "withdraw" || actionTx?.action === "claim" ? actionTx : null;
 
   useEffect(() => {
     if (!withdrawalSuccess) return;
-    setAmount("");
+    setMode("withdraw");
+    setWithdrawAmount("");
     setFormError(null);
   }, [withdrawalSuccess, actionTx?.txHash]);
 
   function submitWithdrawal(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const requestedAmount = Math.trunc(Number(amount));
+    const requestedAmount = Math.trunc(Number(withdrawAmount));
     if (!Number.isFinite(requestedAmount) || requestedAmount <= 0) {
       setFormError("Enter a valid CKB amount.");
       return;
     }
     const position = withdrawablePositions.find((item) => item.available_amount >= requestedAmount);
     if (!position) {
-      setFormError(`Largest single withdrawal available is ${assetAmount(largestSingleReceipt, dashboard.vault.asset)}.`);
+      setFormError(`Largest single withdrawal available is ${assetAmount(largestSingleReceipt, vault.asset)}.`);
       return;
     }
     setFormError(null);
@@ -318,42 +321,96 @@ function VaultWithdrawalPanel({ dashboard, claimableFees, busy, actionTx, onWith
   }
 
   return (
-    <section className="console-panel vault-withdraw-panel">
-      <div className="panel-title split-title">
-        <div>
-          <h2>Withdraw From Vault</h2>
-          <p>Available liquidity returns directly to the connected wallet.</p>
-        </div>
-        <span className="count-pill">{dashboard.positions.length} receipt{dashboard.positions.length === 1 ? "" : "s"}</span>
+    <section className="vault-action-card" data-mode={mode}>
+      <div className="vault-card-topline">Available Vault Capacity</div>
+      <div className="vault-card-balance">
+        <strong>{formatWhole(vault.available_liquidity)}</strong>
+        <span>{vault.asset}</span>
       </div>
-      <div className="vault-balance-card">
-        <Metric label="Available to withdraw" value={assetAmount(totalAvailable, dashboard.vault.asset)} />
-        <Metric label="Max single withdrawal" value={assetAmount(largestSingleReceipt, dashboard.vault.asset)} />
-        <Metric label="Claimable fees" value={assetAmount(claimableFees, dashboard.vault.asset)} />
+      <div className="vault-card-divider" />
+      <div className="vault-card-metrics">
+        <Metric label="Total supplied" value={assetAmount(vault.total_deposits, vault.asset)} />
+        <Metric label="Yield accrued" value={assetAmount(vault.fees_earned, vault.asset)} />
       </div>
-      {withdrawalSuccess ? (
-        <div className="withdraw-success-card" role="status">
-          <CheckCircle2 size={22} />
-          <div>
-            <strong>Withdrawal complete</strong>
-            <span>{actionTx.amount && actionTx.asset ? `${assetAmount(actionTx.amount, actionTx.asset)} returned to your wallet.` : "Vault balance refreshed from Core."}</span>
-            {actionTx.txHash ? <TxMiniLink txHash={actionTx.txHash} label="Withdrawal tx" /> : null}
+      <div className="vault-card-divider" />
+      <div className="vault-mode-switch" role="tablist" aria-label="Vault action mode">
+        <button type="button" data-active={mode === "supply"} onClick={() => setMode("supply")}>
+          <PlusCircle size={21} /> Supply
+        </button>
+        <button type="button" data-active={mode === "withdraw"} onClick={() => setMode("withdraw")}>
+          <ArrowDownToLine size={21} /> Withdraw
+        </button>
+      </div>
+
+      <div className="vault-action-surface">
+        {mode === "supply" ? (
+          <div className="vault-action-pane">
+            <div className="panel-title compact-title">
+              <CircleDollarSign size={20} />
+              <div>
+                <h2>Supply Liquidity</h2>
+                <p>Fund the active CKB vault and record an LP receipt.</p>
+              </div>
+            </div>
+            <form className="stack-form console-form" onSubmit={onDeposit}>
+              <div className="form-row">
+                <label>Asset<input name="asset" value={vault.asset} readOnly required /></label>
+                <label>Amount ({vault.asset})<input name="amount" type="number" min="1" step="1" placeholder="100" required /></label>
+              </div>
+              <div className="form-meter">
+                <span>Channel utilization after supply</span>
+                <strong>{utilization}%</strong>
+                <div><i style={{ width: `${Math.max(utilization, 4)}%` }} /></div>
+              </div>
+              <button type="submit" className="gold-button" disabled={busy === "deposit" || !vaultReady}>{busy === "deposit" ? <Loader2 className="spin" size={16} /> : <Banknote size={16} />} Confirm Supply</button>
+            </form>
+            {vaultReady && vault.address ? <p className="muted compact-note">Active vault <code>{shortAddress(vault.address)}</code></p> : <p className="muted compact-note">Vault setup is pending on Core.</p>}
+            <SupplyTransactionPanel state={supplyTx} />
           </div>
-        </div>
-      ) : null}
-      <form className="stack-form console-form" onSubmit={submitWithdrawal}>
-        <label>Amount ({dashboard.vault.asset})<input value={amount} onChange={(event) => setAmount(event.target.value)} name="amount" type="number" min="1" step="1" max={largestSingleReceipt || undefined} placeholder={largestSingleReceipt ? String(largestSingleReceipt) : "0"} required /></label>
-        {formError ? <p className="form-error">{formError}</p> : null}
-        <div className="withdraw-actions">
-          <button type="button" className="ghost-button" onClick={() => setAmount(String(largestSingleReceipt))} disabled={!largestSingleReceipt || withdrawalRunning}>Max</button>
-          <button type="submit" className="gold-button" disabled={!largestSingleReceipt || withdrawalRunning}>
-            {withdrawalRunning ? <Loader2 className="spin" size={16} /> : withdrawalSuccess ? <CheckCircle2 size={16} /> : <ArrowRight size={16} />} {withdrawalSuccess ? "Withdraw Again" : "Withdraw"}
-          </button>
-        </div>
-      </form>
-      <button type="button" className="ghost-button claim-all-button" onClick={() => claimablePosition ? onClaimFees(claimablePosition.id) : undefined} disabled={!claimablePosition || busy?.startsWith("claim-")}>
-        {busy?.startsWith("claim-") ? <Loader2 className="spin" size={16} /> : <Banknote size={16} />} Claim fees
-      </button>
+        ) : (
+          <div className="vault-action-pane">
+            <div className="panel-title compact-title split-title">
+              <div className="panel-title-inline">
+                <ArrowDownToLine size={20} />
+                <div>
+                  <h2>Withdraw From Vault</h2>
+                  <p>Available liquidity returns directly to the connected wallet.</p>
+                </div>
+              </div>
+              <span className="count-pill">{dashboard.positions.length} receipt{dashboard.positions.length === 1 ? "" : "s"}</span>
+            </div>
+            <div className="vault-balance-card withdraw-balance-grid">
+              <Metric label="Available to withdraw" value={assetAmount(totalAvailable, vault.asset)} />
+              <Metric label="Max single withdrawal" value={assetAmount(largestSingleReceipt, vault.asset)} />
+              <Metric label="Claimable fees" value={assetAmount(claimableFees, vault.asset)} />
+            </div>
+            {withdrawalSuccess ? (
+              <div className="withdraw-success-card" role="status">
+                <CheckCircle2 size={22} />
+                <div>
+                  <strong>Withdrawal complete</strong>
+                  <span>{actionTx.amount && actionTx.asset ? `${assetAmount(actionTx.amount, actionTx.asset)} returned to your wallet.` : "Vault balance refreshed from Core."}</span>
+                  {actionTx.txHash ? <TxMiniLink txHash={actionTx.txHash} label="Withdrawal tx" /> : null}
+                </div>
+              </div>
+            ) : null}
+            <form className="stack-form console-form" onSubmit={submitWithdrawal}>
+              <label>Amount ({vault.asset})<input value={withdrawAmount} onChange={(event) => setWithdrawAmount(event.target.value)} name="amount" type="number" min="1" step="1" max={largestSingleReceipt || undefined} placeholder={largestSingleReceipt ? String(largestSingleReceipt) : "0"} required /></label>
+              {formError ? <p className="form-error">{formError}</p> : null}
+              <div className="withdraw-actions">
+                <button type="button" className="ghost-button" onClick={() => setWithdrawAmount(String(largestSingleReceipt))} disabled={!largestSingleReceipt || withdrawalRunning}>Max</button>
+                <button type="submit" className="gold-button" disabled={!largestSingleReceipt || withdrawalRunning}>
+                  {withdrawalRunning ? <Loader2 className="spin" size={16} /> : withdrawalSuccess ? <CheckCircle2 size={16} /> : <ArrowRight size={16} />} {withdrawalSuccess ? "Withdraw Again" : "Withdraw"}
+                </button>
+              </div>
+            </form>
+            <button type="button" className="ghost-button claim-all-button" onClick={() => claimablePosition ? onClaimFees(claimablePosition.id) : undefined} disabled={!claimablePosition || busy?.startsWith("claim-")}>
+              {busy?.startsWith("claim-") ? <Loader2 className="spin" size={16} /> : <Banknote size={16} />} Claim fees
+            </button>
+            <ActionTransactionPanel state={settlementAction} />
+          </div>
+        )}
+      </div>
     </section>
   );
 }
@@ -873,6 +930,10 @@ function money(value: number) {
     currency: "USD",
     maximumFractionDigits: 0,
   }).format(value);
+}
+
+function formatWhole(value: number) {
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
 }
 
 function assetAmount(value: number, asset: string) {

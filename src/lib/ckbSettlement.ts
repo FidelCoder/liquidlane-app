@@ -189,7 +189,11 @@ function buildWithdrawalTx(input: {
     outputs.push({ capacity: toHex(input.receiptCell.capacity), lock: input.userLock, type: input.receiptCell.type });
     outputsData.push(receiptDataHex({ ...input.receiptCell.data, supplied: input.receiptCell.data.supplied - input.amount.units, available: input.receiptCell.data.available - input.amount.units }));
   }
-  outputs.push({ capacity: toHex(input.payoutCapacity), lock: input.userLock }, { capacity: toHex(changeCapacity), lock: input.userLock });
+  const releasedReceiptCapacity = input.hasReceiptOutput ? BigInt(0) : input.receiptCell.capacity;
+  outputs.push(
+    { capacity: toHex(input.payoutCapacity + releasedReceiptCapacity), lock: input.userLock },
+    { capacity: toHex(changeCapacity), lock: input.userLock },
+  );
   outputsData.push("0x", "0x");
   return baseTx(input.scripts, input.funding.inputs, input.receiptCell.input, input.vaultCell.input, outputs, outputsData);
 }

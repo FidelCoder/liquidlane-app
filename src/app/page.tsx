@@ -624,14 +624,18 @@ export default function Home() {
     return undefined;
   }
 
-  function applyWithdrawalSnapshot(position: LpPosition, amount: number, txHash: string) {
+  function applyWithdrawalSnapshot(position: LpPosition, vaultBefore: VaultSummary, amount: number, txHash: string) {
     const now = new Date().toISOString();
+    const expectedSupplied = Math.max(position.supplied_amount - amount, 0);
+    const expectedAvailable = Math.max(position.available_amount - amount, 0);
+    const expectedVaultTotal = Math.max(vaultBefore.total_deposits - amount, 0);
+    const expectedVaultAvailable = Math.max(vaultBefore.available_liquidity - amount, 0);
     setDashboard((current) => {
       if (!current) return current;
       const positions = current.positions.map((item) => {
         if (item.id !== position.id) return item;
-        const nextSupplied = Math.max(item.supplied_amount - amount, 0);
-        const nextAvailable = Math.max(item.available_amount - amount, 0);
+        const nextSupplied = Math.min(item.supplied_amount, expectedSupplied);
+        const nextAvailable = Math.min(item.available_amount, expectedAvailable);
         const shouldClose = nextSupplied === 0 && item.reserved_amount === 0 && item.deployed_amount === 0;
         return {
           ...item,
@@ -643,8 +647,8 @@ export default function Home() {
       });
       const vault = {
         ...current.vault,
-        total_deposits: Math.max(current.vault.total_deposits - amount, 0),
-        available_liquidity: Math.max(current.vault.available_liquidity - amount, 0),
+        total_deposits: Math.min(current.vault.total_deposits, expectedVaultTotal),
+        available_liquidity: Math.min(current.vault.available_liquidity, expectedVaultAvailable),
       };
       return {
         ...current,
@@ -1151,7 +1155,8 @@ export default function Home() {
   }
 
   async function withdrawPosition(positionId: string, requestedAmount?: number) {
-    const position = dashboard?.positions.find((item) => item.id === positionId);
+    if (!dashboard) return setStatus("LiquidLane dashboard is still syncing.");
+    const position = dashboard.positions.find((item) => item.id === positionId);
     if (!position) return setStatus("LP position was not found.");
     if (position.available_amount <= 0) return setStatus("This LP position has no available liquidity to withdraw.");
     const amount = requestedAmount ?? position.available_amount;
@@ -1215,7 +1220,7 @@ export default function Home() {
           signed_tx: signed.tx,
         }),
       });
-      applyWithdrawalSnapshot(position, amount, signed.txHash);
+      const vaultBeforeWithdrawal = dashboard.vault;
       writeActionTx({
         status: "success",
         action: "withdraw",
@@ -1227,6 +1232,7 @@ export default function Home() {
         explorerUrl,
       });
       await refresh(token);
+      applyWithdrawalSnapshot(position, vaultBeforeWithdrawal, amount, signed.txHash);
       setStatus(`Withdrawal broadcast ${shortHash(signed.txHash)} and settled in Core.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Withdrawal failed.";
