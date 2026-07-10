@@ -1433,6 +1433,48 @@ export default function Home() {
   }
 
 
+
+  async function attachFiberPeer(id: string, event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const requestItem = dashboard?.liquidity_requests.find((item) => item.id === id);
+    setBusy(`peer-${id}`);
+    try {
+      const updated = await request<LiquidityRequest>(`/liquidity/requests/${id}/peer`, {
+        method: "POST",
+        body: JSON.stringify({
+          fiber_peer_pubkey: String(form.get("fiber_peer_pubkey") ?? ""),
+          fiber_peer_address: String(form.get("fiber_peer_address") ?? ""),
+        }),
+      });
+      writeActionTx({
+        status: "success",
+        action: "fiber",
+        title: "Fiber peer attached",
+        message: "This recovered request is now ready for operator channel open.",
+        amount: updated.amount,
+        asset: updated.asset,
+        txHash: updated.request_tx_hash ?? requestItem?.request_tx_hash ?? undefined,
+      });
+      setStatus("Fiber peer details attached. You can open the channel from the Node Console.");
+      await refresh();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not attach Fiber peer details.";
+      writeActionTx({
+        status: "failed",
+        action: "fiber",
+        title: "Peer attach failed",
+        message: "The request is still reserved, but the peer details were not saved.",
+        amount: requestItem?.amount,
+        asset: requestItem?.asset ?? DEFAULT_ASSET,
+        error: message,
+      });
+      setStatus(message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function openFiberChannel(id: string) {
     const requestItem = dashboard?.liquidity_requests.find((item) => item.id === id);
     if (!fiberRpcConfigured) {
@@ -1595,6 +1637,7 @@ export default function Home() {
         onDeposit={handleDeposit}
         onRequest={handleRequest}
         onOpenFiberChannel={openFiberChannel}
+        onAttachFiberPeer={attachFiberPeer}
         onWithdrawPosition={withdrawPosition}
         onClaimFees={claimFees}
       />

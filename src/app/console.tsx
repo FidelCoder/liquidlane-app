@@ -74,6 +74,7 @@ export type ConsoleAppProps = {
   onDeposit: (event: FormEvent<HTMLFormElement>) => void;
   onRequest: (event: FormEvent<HTMLFormElement>) => void;
   onOpenFiberChannel: (id: string) => void;
+  onAttachFiberPeer: (id: string, event: FormEvent<HTMLFormElement>) => void;
   onWithdrawPosition: (id: string, amount?: number) => void;
   onClaimFees: (id: string) => void;
 };
@@ -112,6 +113,7 @@ export function ConsoleApp(props: ConsoleAppProps) {
     onDeposit,
     onRequest,
     onOpenFiberChannel,
+    onAttachFiberPeer,
     onWithdrawPosition,
     onClaimFees,
   } = props;
@@ -191,9 +193,9 @@ export function ConsoleApp(props: ConsoleAppProps) {
           {activeView === "lp" ? (
             <LiquidityProvisionView dashboard={dashboard} utilization={utilization} vaultReady={vaultReady} busy={busy} supplyTx={supplyTx} actionTx={actionTx} claimableFees={claimableFees} onDeposit={onDeposit} onWithdrawPosition={onWithdrawPosition} onClaimFees={onClaimFees} />
           ) : activeView === "merchant" ? (
-            <MerchantTerminalView dashboard={dashboard} busy={busy} quote={quote} fiberRpcConfigured={fiberRpcConfigured} onRequest={onRequest} onOpenFiberChannel={onOpenFiberChannel} />
+            <MerchantTerminalView dashboard={dashboard} busy={busy} quote={quote} fiberRpcConfigured={fiberRpcConfigured} onRequest={onRequest} onOpenFiberChannel={onOpenFiberChannel} onAttachFiberPeer={onAttachFiberPeer} />
           ) : activeView === "operator" ? (
-            <NodeConsoleView dashboard={dashboard} busy={busy} utilization={utilization} fiberRpcConfigured={fiberRpcConfigured} onOpenFiberChannel={onOpenFiberChannel} />
+            <NodeConsoleView dashboard={dashboard} busy={busy} utilization={utilization} fiberRpcConfigured={fiberRpcConfigured} onOpenFiberChannel={onOpenFiberChannel} onAttachFiberPeer={onAttachFiberPeer} />
           ) : (
             <VaultStatsView dashboard={dashboard} utilization={utilization} claimableFees={claimableFees} busy={busy} onWithdrawPosition={onWithdrawPosition} onClaimFees={onClaimFees} />
           )}
@@ -605,13 +607,14 @@ function buildTransactionActivity(dashboard: Dashboard): TransactionActivityEntr
     .slice(0, 10);
 }
 
-function MerchantTerminalView({ dashboard, busy, quote, fiberRpcConfigured, onRequest, onOpenFiberChannel }: {
+function MerchantTerminalView({ dashboard, busy, quote, fiberRpcConfigured, onRequest, onOpenFiberChannel, onAttachFiberPeer }: {
   dashboard: Dashboard;
   busy: string | null;
   quote: LiquidityQuote | null;
   fiberRpcConfigured: boolean;
   onRequest: (event: FormEvent<HTMLFormElement>) => void;
   onOpenFiberChannel: (id: string) => void;
+  onAttachFiberPeer: (id: string, event: FormEvent<HTMLFormElement>) => void;
 }) {
   const vault = dashboard.vault;
   const walletAccess = merchantWalletAccess(dashboard);
@@ -684,7 +687,7 @@ function MerchantTerminalView({ dashboard, busy, quote, fiberRpcConfigured, onRe
           </div>
           <span className="count-pill">{dashboard.vault.active_requests} Active</span>
         </div>
-        <RequestQueue requests={dashboard.liquidity_requests} busy={busy} canOpen fiberRpcConfigured={fiberRpcConfigured} onOpenFiberChannel={onOpenFiberChannel} />
+        <RequestQueue requests={dashboard.liquidity_requests} busy={busy} canOpen fiberRpcConfigured={fiberRpcConfigured} onOpenFiberChannel={onOpenFiberChannel} onAttachFiberPeer={onAttachFiberPeer} />
       </section>
     </div>
   );
@@ -711,12 +714,13 @@ function handoffMessage(total: number, ready: number, missingPeer: number, fiber
     : "Reserved requests are waiting for Core to be connected to a Fiber RPC node.";
 }
 
-function NodeConsoleView({ dashboard, busy, utilization, fiberRpcConfigured, onOpenFiberChannel }: {
+function NodeConsoleView({ dashboard, busy, utilization, fiberRpcConfigured, onOpenFiberChannel, onAttachFiberPeer }: {
   dashboard: Dashboard;
   busy: string | null;
   utilization: number;
   fiberRpcConfigured: boolean;
   onOpenFiberChannel: (id: string) => void;
+  onAttachFiberPeer: (id: string, event: FormEvent<HTMLFormElement>) => void;
 }) {
   const vault = dashboard.vault;
   const openChannels = dashboard.liquidity_requests.filter((request) => request.status === "channel_open").length;
@@ -768,7 +772,7 @@ function NodeConsoleView({ dashboard, busy, utilization, fiberRpcConfigured, onO
           </div>
           <Filter size={18} />
         </div>
-        <RequestQueue requests={dashboard.liquidity_requests} busy={busy} canOpen fiberRpcConfigured={fiberRpcConfigured} onOpenFiberChannel={onOpenFiberChannel} compact />
+        <RequestQueue requests={dashboard.liquidity_requests} busy={busy} canOpen fiberRpcConfigured={fiberRpcConfigured} onOpenFiberChannel={onOpenFiberChannel} onAttachFiberPeer={onAttachFiberPeer} compact />
       </section>
 
       <section className="console-panel operations-panel">
@@ -841,12 +845,13 @@ function ReserveTable({ dashboard }: { dashboard: Dashboard }) {
   );
 }
 
-function RequestQueue({ requests, busy, canOpen, fiberRpcConfigured = true, onOpenFiberChannel, compact = false }: {
+function RequestQueue({ requests, busy, canOpen, fiberRpcConfigured = true, onOpenFiberChannel, onAttachFiberPeer, compact = false }: {
   requests: LiquidityRequest[];
   busy: string | null;
   canOpen: boolean;
   fiberRpcConfigured?: boolean;
   onOpenFiberChannel: (id: string) => void;
+  onAttachFiberPeer: (id: string, event: FormEvent<HTMLFormElement>) => void;
   compact?: boolean;
 }) {
   if (!requests.length) {
@@ -878,6 +883,15 @@ function RequestQueue({ requests, busy, canOpen, fiberRpcConfigured = true, onOp
               {request.fiber_note ? <span className="queue-note">{request.fiber_note}</span> : null}
               {request.fiber_error ? <span className="error-text">{request.fiber_error}</span> : null}
               {request.status === "requested" && canOpen && !fiberRpcConfigured ? <span className="error-text">Set FIBER_RPC_URL on Core before opening this channel.</span> : null}
+              {request.status === "requested" && canOpen && !hasPeer ? (
+                <form className="peer-attach-form" onSubmit={(event) => onAttachFiberPeer(request.id, event)}>
+                  <input name="fiber_peer_pubkey" placeholder="Fiber pubkey 02..." required />
+                  <input name="fiber_peer_address" placeholder="/ip4/.../tcp/8228/p2p/... optional" />
+                  <button type="submit" className="ghost-button small" disabled={busy === `peer-${request.id}`}>
+                    {busy === `peer-${request.id}` ? <Loader2 className="spin" size={14} /> : <Link2 size={14} />} Attach peer
+                  </button>
+                </form>
+              ) : null}
             </div>
           </div>
           <div className="queue-actions">

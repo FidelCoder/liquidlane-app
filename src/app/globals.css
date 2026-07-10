@@ -852,6 +852,8 @@ code {
 .queue-item > div:first-child > div { display: grid; gap: 6px; min-width: 0; }
 .queue-item strong { font-size: 1.45rem; }
 .queue-actions { align-items: end; display: grid; gap: 10px; justify-items: end; }
+.peer-attach-form { display: grid; gap: 8px; grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto; margin-top: 4px; max-width: 760px; }
+.peer-attach-form input { background: #07101f; border: 1px solid #344154; color: #f4e8d3; min-height: 34px; padding: 0 10px; }
 .fiber-operation-list { display: grid; gap: 12px; }
 .fiber-operation-card {
   align-items: flex-start;
@@ -1758,6 +1760,7 @@ code {
   .queue-item,
   .request-card { grid-template-columns: 1fr; }
   .queue-actions { align-items: flex-start; justify-items: flex-start; }
+  .peer-attach-form { grid-template-columns: 1fr; width: 100%; }
   .form-row,
   .metric-grid,
   .position-metrics,
