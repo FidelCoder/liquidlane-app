@@ -305,6 +305,8 @@ function LiquidityVaultCard({ dashboard, utilization, vaultReady, busy, supplyTx
     [dashboard.positions],
   );
   const totalAvailable = withdrawablePositions.reduce((sum, position) => sum + position.available_amount, 0);
+  const walletSupplied = dashboard.positions.reduce((sum, position) => sum + position.supplied_amount, 0);
+  const walletReserved = dashboard.positions.reduce((sum, position) => sum + position.reserved_amount, 0);
   const largestSingleReceipt = withdrawablePositions.reduce((max, position) => Math.max(max, position.available_amount), 0);
   const claimablePosition = dashboard.positions.find((position) => position.fees_earned > position.fees_claimed);
   const withdrawalRunning = Boolean(busy?.startsWith("withdraw-") || (actionTx?.action === "withdraw" && actionTx.status === "running"));
@@ -342,15 +344,16 @@ function LiquidityVaultCard({ dashboard, utilization, vaultReady, busy, supplyTx
 
   return (
     <section className="vault-action-card" data-mode={mode}>
-      <div className="vault-card-topline">Available for Requests</div>
+      <div className="vault-card-topline">Your Withdrawable Liquidity</div>
       <div className="vault-card-balance">
-        <strong>{formatWhole(vault.available_liquidity)}</strong>
+        <strong>{formatWhole(totalAvailable)}</strong>
         <span>{vault.asset}</span>
       </div>
       <div className="vault-card-divider" />
       <div className="vault-card-metrics">
-        <Metric label="Total supplied" value={assetAmount(vault.total_deposits, vault.asset)} />
-        <Metric label="Reserved" value={assetAmount(vault.reserved_liquidity, vault.asset)} />
+        <Metric label="Your supplied" value={assetAmount(walletSupplied, vault.asset)} />
+        <Metric label="Your reserved" value={assetAmount(walletReserved, vault.asset)} />
+        <Metric label="Global available" value={assetAmount(vault.available_liquidity, vault.asset)} />
         <Metric label="Yield accrued" value={assetAmount(vault.fees_earned, vault.asset)} />
       </div>
       <div className="vault-card-divider" />
