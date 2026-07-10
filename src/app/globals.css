@@ -1014,6 +1014,7 @@ code {
 }
 .empty-state strong { color: var(--text); }
 .error-text { color: var(--red) !important; }
+.queue-note { color: #f0d59b !important; max-width: 620px; }
 .compact-note { font-size: 0.9rem; line-height: 1.45; margin: 12px 0 0; }
 
 .supply-transaction {

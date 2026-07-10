@@ -702,6 +702,15 @@ function merchantWalletAccess(dashboard: Dashboard) {
   };
 }
 
+function handoffMessage(total: number, ready: number, missingPeer: number, fiberRpcConfigured: boolean) {
+  if (!total) return "The lane is waiting for merchant requests backed by vault liquidity.";
+  if (missingPeer && !ready) return "On-chain reservations were recovered, but Fiber peer details must be attached before channel open.";
+  if (missingPeer) return `${ready} request${ready === 1 ? "" : "s"} can open now. ${missingPeer} recovered request${missingPeer === 1 ? "" : "s"} need Fiber peer details.`;
+  return fiberRpcConfigured
+    ? "Reserved requests are ready for the configured Fiber RPC node."
+    : "Reserved requests are waiting for Core to be connected to a Fiber RPC node.";
+}
+
 function NodeConsoleView({ dashboard, busy, utilization, fiberRpcConfigured, onOpenFiberChannel }: {
   dashboard: Dashboard;
   busy: string | null;
@@ -712,6 +721,8 @@ function NodeConsoleView({ dashboard, busy, utilization, fiberRpcConfigured, onO
   const vault = dashboard.vault;
   const openChannels = dashboard.liquidity_requests.filter((request) => request.status === "channel_open").length;
   const pending = dashboard.liquidity_requests.filter((request) => request.status === "requested" || request.status === "pending_fiber_channel");
+  const readyPending = pending.filter((request) => Boolean(request.fiber_peer_pubkey)).length;
+  const missingPeer = pending.length - readyPending;
   const operations = dashboard.liquidity_requests.filter((request) =>
     request.status === "pending_fiber_channel" || request.status === "channel_open" || request.status === "failed"
   );
@@ -731,7 +742,7 @@ function NodeConsoleView({ dashboard, busy, utilization, fiberRpcConfigured, onO
         <div className="stat-card">
           <span>Active Fiber Channels</span>
           <strong>{openChannels}</strong>
-          <small>{pending.length} pending opens</small>
+          <small>{readyPending} ready / {missingPeer} need peer</small>
         </div>
       </section>
 
@@ -740,10 +751,10 @@ function NodeConsoleView({ dashboard, busy, utilization, fiberRpcConfigured, onO
         <div className="topology-content">
           <span className="topology-badge">{pending.length ? `${pending.length} pending` : "No pending opens"}</span>
           <h2>Fiber handoff readiness</h2>
-          <p>{pending.length ? (fiberRpcConfigured ? "Reserved requests are ready for the configured Fiber RPC node." : "Reserved requests are waiting for Core to be connected to a Fiber RPC node.") : "The lane is waiting for merchant requests backed by vault liquidity."}</p>
+          <p>{handoffMessage(pending.length, readyPending, missingPeer, fiberRpcConfigured)}</p>
           <div className="topology-stats">
             <div><strong>{openChannels}</strong><span>open channels</span></div>
-            <div><strong>{pending.length}</strong><span>pending opens</span></div>
+            <div><strong>{readyPending}</strong><span>ready opens</span></div>
             <div><strong>{assetAmount(vault.pending_channel_liquidity, vault.asset)}</strong><span>in handoff</span></div>
           </div>
         </div>
@@ -844,7 +855,16 @@ function RequestQueue({ requests, busy, canOpen, fiberRpcConfigured = true, onOp
 
   return (
     <div className={compact ? "request-queue compact" : "request-queue"}>
-      {requests.map((request) => (
+      {requests.map((request) => {
+        const hasPeer = Boolean(request.fiber_peer_pubkey);
+        const openDisabled = busy === request.id || !fiberRpcConfigured || !hasPeer;
+        const openLabel = !hasPeer ? "Peer missing" : fiberRpcConfigured ? "Open Fiber" : "Fiber RPC missing";
+        const openTitle = !hasPeer
+          ? "This on-chain request needs Fiber peer details reattached before channel open."
+          : !fiberRpcConfigured
+            ? "Set FIBER_RPC_URL on Core before opening Fiber channels."
+            : "Open Fiber channel";
+        return (
         <article className="queue-item" key={request.id} data-status={request.status}>
           <div>
             <span className="queue-status"><Link2 size={15} /></span>
@@ -855,6 +875,7 @@ function RequestQueue({ requests, busy, canOpen, fiberRpcConfigured = true, onOp
               {request.fiber_peer_address ? <code>Address: {shortFiberAddress(request.fiber_peer_address)}</code> : null}
               <code>Request: {shortId(request.request_cell_id)}</code>
               {request.request_tx_hash ? <TxMiniLink txHash={request.request_tx_hash} label="Request tx" /> : null}
+              {request.fiber_note ? <span className="queue-note">{request.fiber_note}</span> : null}
               {request.fiber_error ? <span className="error-text">{request.fiber_error}</span> : null}
               {request.status === "requested" && canOpen && !fiberRpcConfigured ? <span className="error-text">Set FIBER_RPC_URL on Core before opening this channel.</span> : null}
             </div>
@@ -862,13 +883,14 @@ function RequestQueue({ requests, busy, canOpen, fiberRpcConfigured = true, onOp
           <div className="queue-actions">
             <span className="status-tag" data-status={request.status}>{statusLabel(request.status)}</span>
             {request.status === "requested" && canOpen ? (
-              <button type="button" className="ghost-button small" onClick={() => onOpenFiberChannel(request.id)} disabled={busy === request.id || !fiberRpcConfigured} title={!fiberRpcConfigured ? "Set FIBER_RPC_URL on Core before opening Fiber channels." : "Open Fiber channel"}>
-                {busy === request.id ? <Loader2 className="spin" size={14} /> : <ArrowUpRight size={14} />} {fiberRpcConfigured ? "Open Fiber" : "Fiber RPC missing"}
+              <button type="button" className="ghost-button small" onClick={() => onOpenFiberChannel(request.id)} disabled={openDisabled} title={openTitle}>
+                {busy === request.id ? <Loader2 className="spin" size={14} /> : <ArrowUpRight size={14} />} {openLabel}
               </button>
             ) : request.channel_id ? <code>{shortHash(request.channel_id)}</code> : request.fiber_temporary_channel_id ? <code>{shortHash(request.fiber_temporary_channel_id)}</code> : null}
           </div>
         </article>
-      ))}
+        );
+      })}
     </div>
   );
 }
