@@ -1387,7 +1387,7 @@ code {
 .vault-card-metrics {
   display: grid;
   gap: 18px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 .vault-card-metrics div {
   background: rgba(255, 255, 255, 0.055);
@@ -1401,7 +1401,8 @@ code {
 }
 .vault-card-metrics span { color: #e7dac7; }
 .vault-card-metrics strong { color: #e9eeff; font-size: 1.65rem; }
-.vault-card-metrics div:nth-child(2) strong { color: #60f0aa; }
+.vault-card-metrics div:nth-child(2) strong { color: var(--gold); }
+.vault-card-metrics div:nth-child(3) strong { color: #60f0aa; }
 .vault-mode-switch {
   display: grid;
   gap: 18px;

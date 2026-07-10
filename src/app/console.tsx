@@ -342,7 +342,7 @@ function LiquidityVaultCard({ dashboard, utilization, vaultReady, busy, supplyTx
 
   return (
     <section className="vault-action-card" data-mode={mode}>
-      <div className="vault-card-topline">Available Vault Capacity</div>
+      <div className="vault-card-topline">Available for Requests</div>
       <div className="vault-card-balance">
         <strong>{formatWhole(vault.available_liquidity)}</strong>
         <span>{vault.asset}</span>
@@ -350,6 +350,7 @@ function LiquidityVaultCard({ dashboard, utilization, vaultReady, busy, supplyTx
       <div className="vault-card-divider" />
       <div className="vault-card-metrics">
         <Metric label="Total supplied" value={assetAmount(vault.total_deposits, vault.asset)} />
+        <Metric label="Reserved" value={assetAmount(vault.reserved_liquidity, vault.asset)} />
         <Metric label="Yield accrued" value={assetAmount(vault.fees_earned, vault.asset)} />
       </div>
       <div className="vault-card-divider" />
@@ -758,7 +759,7 @@ function VaultStatsView({ dashboard, utilization, claimableFees, busy, onWithdra
         <div className="meter" aria-hidden="true"><span style={{ width: `${Math.max(utilization, 2)}%` }} /></div>
         <div className="metric-grid">
           <Metric label="Total supplied" value={assetAmount(vault.total_deposits, vault.asset)} />
-          <Metric label="Available" value={assetAmount(vault.available_liquidity, vault.asset)} />
+          <Metric label="Available for requests" value={assetAmount(vault.available_liquidity, vault.asset)} />
           <Metric label="Reserved" value={assetAmount(vault.reserved_liquidity, vault.asset)} />
           <Metric label="Pending Fiber" value={assetAmount(vault.pending_channel_liquidity, vault.asset)} />
           <Metric label="Channel open" value={assetAmount(vault.deployed_liquidity, vault.asset)} />
