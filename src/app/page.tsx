@@ -1632,9 +1632,10 @@ export default function Home() {
 
         <div className="landing-content">
           <div className="landing-copy">
-            <p className="eyebrow">CKB-native Fiber liquidity</p>
-            <h1>Supply and reserve liquidity for Fiber channels.</h1>
-            <p className="lede">LPs deposit CKB. Merchants reserve receive capacity. Operators coordinate the channel-open handoff from one dashboard.</p>
+            <p className="eyebrow">Liquidity markets for CKB</p>
+            <h1>The liquidity layer for CKB and Fiber payments.</h1>
+            <p className="lede">Supply CKB into LiquidLane vaults, let merchants reserve receive capacity, and earn from the liquidity demand behind Fiber channel opens.</p>
+            <p className="yield-badge">Target up to 10x yield on active vault supply.</p>
             <div className="hero-actions">
               <button type="button" onClick={canBrowseServices ? () => document.getElementById("services")?.scrollIntoView({ behavior: "smooth" }) : connectWallet} disabled={busy === "connect"}>
                 {busy === "connect" ? <Loader2 className="spin" size={16} /> : <ArrowRight size={16} />} {heroActionLabel}
