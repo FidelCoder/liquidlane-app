@@ -313,6 +313,43 @@ const DEPLOYMENT_POPUP_POOL_SIZE = 5;
 const TOKEN_KEY = "liquidlane_token";
 const ADDRESS_KEY = "liquidlane_ckb_address";
 const WALLET_KEY = "liquidlane_joyid_wallet";
+const VIEW_KEY = "liquidlane_console_view";
+const SURFACE_KEY = "liquidlane_surface";
+
+type ConsoleSurface = "landing" | "console";
+type NavigationState = { surface: ConsoleSurface; view: ConsoleView };
+
+function normalizeConsoleView(value: string | null | undefined): ConsoleView | null {
+  if (value === "lp" || value === "merchant" || value === "operator" || value === "vault") return value;
+  return null;
+}
+
+function normalizeSurface(value: string | null | undefined): ConsoleSurface | null {
+  if (value === "landing" || value === "console") return value;
+  return null;
+}
+
+function readNavigationState(): NavigationState {
+  if (typeof window === "undefined") return { surface: "landing", view: "lp" };
+  const hash = window.location.hash.replace(/^#/, "");
+  const hashView = normalizeConsoleView(hash);
+  if (hashView) return { surface: "console", view: hashView };
+  const storedView = normalizeConsoleView(window.localStorage.getItem(VIEW_KEY)) ?? "lp";
+  const hashSurface = hash === "home" || hash === "services" || hash === "lifecycle" ? "landing" : null;
+  return {
+    surface: hashSurface ?? normalizeSurface(window.localStorage.getItem(SURFACE_KEY)) ?? "landing",
+    view: storedView,
+  };
+}
+
+function persistNavigationState(surface: ConsoleSurface, view: ConsoleView) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(SURFACE_KEY, surface);
+  window.localStorage.setItem(VIEW_KEY, view);
+  const nextHash = surface === "landing" ? "home" : view;
+  const nextUrl = `${window.location.pathname}${window.location.search}#${nextHash}`;
+  window.history.replaceState(null, "", nextUrl);
+}
 
 
 function persistWalletSession(wallet: ConnectedCkbWallet) {
@@ -373,7 +410,8 @@ export default function Home() {
   const [wallet, setWallet] = useState<ConnectedCkbWallet | null>(null);
   const [ckbAddress, setCkbAddress] = useState<string | null>(null);
   const [selectedRole, setSelectedRole] = useState<Role | null>(null);
-  const [activeView, setActiveView] = useState<ConsoleView>("lp");
+  const [activeView, setActiveView] = useState<ConsoleView>(() => readNavigationState().view);
+  const [surface, setSurface] = useState<ConsoleSurface>(() => readNavigationState().surface);
   const [fiberRpcConfigured, setFiberRpcConfigured] = useState(false);
   const [coreHealth, setCoreHealth] = useState<HealthStatus | null>(null);
   const [status, setStatus] = useState("Connect a CKB wallet to choose a LiquidLane service.");
@@ -454,7 +492,7 @@ export default function Home() {
         setActiveVault(data.vault);
         setToken(activeToken);
         setSelectedRole(data.user.role);
-        setActiveView(data.user.role);
+        setActiveView((current) => normalizeConsoleView(current) ?? data.user.role);
         setCkbAddress(data.user.ckb_address);
         window.localStorage.setItem(TOKEN_KEY, activeToken);
         window.localStorage.setItem(ADDRESS_KEY, data.user.ckb_address);
@@ -472,6 +510,9 @@ export default function Home() {
   );
 
   useEffect(() => {
+    const navigation = readNavigationState();
+    setSurface(navigation.surface);
+    setActiveView(navigation.view);
     loadVault();
     loadHealth();
     const restoredWallet = restoreWalletSession();
@@ -490,6 +531,30 @@ export default function Home() {
       refresh(savedToken);
     }
   }, [loadHealth, loadVault, refresh]);
+
+  useEffect(() => {
+    function syncFromHash() {
+      const navigation = readNavigationState();
+      setSurface(navigation.surface);
+      setActiveView(navigation.view);
+    }
+
+    window.addEventListener("hashchange", syncFromHash);
+    return () => window.removeEventListener("hashchange", syncFromHash);
+  }, []);
+
+  function openConsoleView(view: ConsoleView) {
+    setSurface("console");
+    setActiveView(view);
+    if (view !== "vault") setSelectedRole(view);
+    persistNavigationState("console", view);
+  }
+
+  function openLandingPage() {
+    setSurface("landing");
+    persistNavigationState("landing", activeView);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
 
   async function connectWallet() {
     setBusy("connect");
@@ -516,7 +581,7 @@ export default function Home() {
 
   async function enterService(role: Role) {
     setSelectedRole(role);
-    setActiveView(role);
+    openConsoleView(role);
     if (dashboard?.user.role === role) {
       document.getElementById("workspace")?.scrollIntoView({ behavior: "smooth" });
       return;
@@ -558,6 +623,7 @@ export default function Home() {
       window.localStorage.setItem(ADDRESS_KEY, data.user.ckb_address);
       setStatus(`Opened ${serviceLabel(role)} for ${shortAddress(data.user.ckb_address)}.`);
       await refresh(data.token);
+      openConsoleView(role);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not open the selected service.");
     } finally {
@@ -580,6 +646,9 @@ export default function Home() {
     setCopiedWalletAddress(false);
     setSelectedRole(null);
     setActiveView("lp");
+    setSurface("landing");
+    window.localStorage.removeItem(VIEW_KEY);
+    window.localStorage.removeItem(SURFACE_KEY);
     setStatus("Signed out. Connect a CKB wallet to choose a service.");
   }
 
@@ -1473,7 +1542,7 @@ export default function Home() {
   const vaultReady = Boolean(vault?.configured && vault.address);
   const claimableFees = dashboard?.positions.reduce((total, position) => total + Math.max(position.fees_earned - position.fees_claimed, 0), 0) ?? 0;
 
-  if (Boolean(dashboard)) {
+  if (Boolean(dashboard) && surface === "console") {
     const activeDashboard = dashboard as Dashboard;
     return (
       <ConsoleApp
@@ -1493,9 +1562,10 @@ export default function Home() {
         vaultReady={vaultReady}
         utilization={utilization}
         claimableFees={claimableFees}
+        onHome={openLandingPage}
         onViewChange={(view) => {
           if (view === "vault") {
-            setActiveView("vault");
+            openConsoleView("vault");
             return;
           }
           void enterService(view);

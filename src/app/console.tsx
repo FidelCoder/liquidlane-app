@@ -15,6 +15,7 @@ import {
   Filter,
   Gauge,
   HelpCircle,
+  House,
   KeyRound,
   Landmark,
   Link2,
@@ -64,6 +65,7 @@ export type ConsoleAppProps = {
   coreHealth: HealthStatus | null;
   utilization: number;
   claimableFees: number;
+  onHome: () => void;
   onViewChange: (view: ConsoleView) => void;
   onConnectWallet: () => void;
   onCopyWalletAddress: (address: string) => void;
@@ -101,6 +103,7 @@ export function ConsoleApp(props: ConsoleAppProps) {
     coreHealth,
     utilization,
     claimableFees,
+    onHome,
     onViewChange,
     onConnectWallet,
     onCopyWalletAddress,
@@ -127,7 +130,7 @@ export function ConsoleApp(props: ConsoleAppProps) {
 
   return (
     <main className="console-shell">
-      <ConsoleRail activeView={activeView} onViewChange={onViewChange} />
+      <ConsoleRail activeView={activeView} onHome={onHome} onViewChange={onViewChange} />
       <section className="console-main">
         <header className="console-topbar">
           <div className="console-titlebar">
@@ -200,11 +203,11 @@ export function ConsoleApp(props: ConsoleAppProps) {
   );
 }
 
-function ConsoleRail({ activeView, onViewChange }: { activeView: ConsoleView; onViewChange: (view: ConsoleView) => void }) {
+function ConsoleRail({ activeView, onHome, onViewChange }: { activeView: ConsoleView; onHome: () => void; onViewChange: (view: ConsoleView) => void }) {
   return (
     <aside className="console-rail" aria-label="LiquidLane quick navigation">
-      <button type="button" className="rail-brand" onClick={() => onViewChange("lp")} aria-label="Liquidity Provision">
-        <Landmark size={22} />
+      <button type="button" className="rail-brand" onClick={onHome} aria-label="Back to LiquidLane home" title="Home">
+        <House size={22} />
       </button>
       <div className="rail-menu">
         {consoleItems.map((item) => {
