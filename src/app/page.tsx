@@ -1632,9 +1632,9 @@ export default function Home() {
 
         <div className="landing-content">
           <div className="landing-copy">
-            <p className="eyebrow">Fiber liquidity infrastructure</p>
-            <h1>Stablecoin capacity for payment channels, ready when apps need it.</h1>
-            <p className="lede">LiquidLane gives LPs, merchants, and node operators one CKB-native lane for vault liquidity, receive capacity, and Fiber channel opens.</p>
+            <p className="eyebrow">CKB-native Fiber liquidity</p>
+            <h1>Supply and reserve liquidity for Fiber channels.</h1>
+            <p className="lede">LPs deposit CKB. Merchants reserve receive capacity. Operators coordinate the channel-open handoff from one dashboard.</p>
             <div className="hero-actions">
               <button type="button" onClick={canBrowseServices ? () => document.getElementById("services")?.scrollIntoView({ behavior: "smooth" }) : connectWallet} disabled={busy === "connect"}>
                 {busy === "connect" ? <Loader2 className="spin" size={16} /> : <ArrowRight size={16} />} {heroActionLabel}
@@ -1648,7 +1648,7 @@ export default function Home() {
       <section className="service-section" id="services">
         <div className="section-heading">
           <p className="eyebrow">Choose service</p>
-          <h2>{canBrowseServices ? "What do you want to do on LiquidLane?" : needsWalletReconnect ? "Reconnect JoyID to continue with this wallet." : "Connect once, then choose the lane you need."}</h2>
+          <h2>{canBrowseServices ? "Choose your LiquidLane workflow." : needsWalletReconnect ? "Reconnect JoyID to continue with this wallet." : "Connect a CKB wallet to start."}</h2>
           <p className="muted">{status}</p>
         </div>
         {needsWalletReconnect ? (
