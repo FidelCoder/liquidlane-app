@@ -611,8 +611,26 @@ function MerchantTerminalView({ dashboard, busy, quote, fiberRpcConfigured, onRe
   onOpenFiberChannel: (id: string) => void;
 }) {
   const vault = dashboard.vault;
+  const walletAccess = merchantWalletAccess(dashboard);
   return (
     <div className="console-grid merchant-grid">
+      <section className="console-panel merchant-access-panel">
+        <div className="panel-title split-title">
+          <div>
+            <h2>Wallet Liquidity Access</h2>
+            <p>Capacity this merchant wallet can use or has already reserved from the live vault.</p>
+          </div>
+          <span className="count-pill">{shortAddress(dashboard.user.ckb_address)}</span>
+        </div>
+        <div className="merchant-access-grid">
+          <Metric label="Available to reserve" value={assetAmount(vault.available_liquidity, vault.asset)} />
+          <Metric label="Reserved for this wallet" value={assetAmount(walletAccess.reserved, vault.asset)} />
+          <Metric label="Channel-open capacity" value={assetAmount(walletAccess.open, vault.asset)} />
+          <Metric label="Lease fees posted" value={assetAmount(walletAccess.fees, vault.asset)} />
+        </div>
+        <p className="merchant-access-note">Reserved capacity stays in the vault until an operator opens the Fiber channel or the request is released.</p>
+      </section>
+
       <section className="console-panel reserve-form-panel">
         <div className="panel-title">
           <Link2 size={22} />
@@ -667,6 +685,18 @@ function MerchantTerminalView({ dashboard, busy, quote, fiberRpcConfigured, onRe
       </section>
     </div>
   );
+}
+
+
+function merchantWalletAccess(dashboard: Dashboard) {
+  const activeReservations = dashboard.reservations.filter((reservation) => reservation.status === "reserved");
+  const openReservations = dashboard.reservations.filter((reservation) => reservation.status === "deployed");
+  const requestsWithFees = dashboard.liquidity_requests.filter((request) => request.request_tx_hash);
+  return {
+    reserved: activeReservations.reduce((total, reservation) => total + reservation.amount, 0),
+    open: openReservations.reduce((total, reservation) => total + reservation.amount, 0),
+    fees: requestsWithFees.reduce((total, request) => total + request.lease_fee, 0),
+  };
 }
 
 function NodeConsoleView({ dashboard, busy, utilization, fiberRpcConfigured, onOpenFiberChannel }: {

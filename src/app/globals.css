@@ -695,6 +695,25 @@ code {
 .merchant-guidance div { display: grid; gap: 5px; }
 .merchant-guidance strong { color: #fff2cf; }
 .merchant-guidance span { color: #b9c4d8; line-height: 1.45; }
+.merchant-access-panel { grid-column: 1 / -1; }
+.merchant-access-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.merchant-access-grid div {
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(247, 184, 73, 0.16);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  min-height: 104px;
+  padding: 18px;
+}
+.merchant-access-grid span { color: #aeb9ca; font-size: 0.82rem; font-weight: 760; }
+.merchant-access-grid strong { color: #f4e8d3; font-size: 1.35rem; overflow-wrap: anywhere; }
+.merchant-access-grid div:first-child strong { color: var(--gold); }
+.merchant-access-note { color: #b9c4d8; line-height: 1.45; margin: 14px 0 0; }
 .split-title { justify-content: space-between; }
 .console-form { margin-top: 0; }
 .stack-form { display: grid; gap: 14px; }
@@ -1682,6 +1701,7 @@ code {
   .console-topbar { grid-template-columns: 1fr; }
   .console-tabs { justify-content: flex-start; }
   .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .merchant-access-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 760px) {
   h1 { font-size: 2.6rem; }
@@ -1741,6 +1761,7 @@ code {
   .quote-strip,
   .withdraw-actions,
   .deployment-mini { grid-template-columns: 1fr; }
+  .merchant-access-grid { grid-template-columns: 1fr; }
   .position-footer,
   .state-row { align-items: flex-start; flex-direction: column; }
   .supply-transaction-head { grid-template-columns: 32px 1fr; }
