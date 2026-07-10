@@ -1594,7 +1594,6 @@ export default function Home() {
           </div>
           <div className="landing-nav-links">
             <a className="active" href="#services">Services</a>
-            <a href="#lifecycle">Lifecycle</a>
           </div>
           <div className="nav-actions">
             {ckbAddress ? (
@@ -1640,7 +1639,6 @@ export default function Home() {
               <button type="button" onClick={canBrowseServices ? () => document.getElementById("services")?.scrollIntoView({ behavior: "smooth" }) : connectWallet} disabled={busy === "connect"}>
                 {busy === "connect" ? <Loader2 className="spin" size={16} /> : <ArrowRight size={16} />} {heroActionLabel}
               </button>
-              <a href="#lifecycle">View lifecycle</a>
             </div>
           </div>
         </div>
@@ -1648,9 +1646,8 @@ export default function Home() {
 
       <section className="service-section" id="services">
         <div className="section-heading">
-          <p className="eyebrow">Choose service</p>
           <h2>{canBrowseServices ? "Choose your LiquidLane workflow." : needsWalletReconnect ? "Reconnect JoyID to continue with this wallet." : "Connect a CKB wallet to start."}</h2>
-          <p className="muted">{status}</p>
+          <p className="muted">Select a workflow to supply liquidity, reserve receive capacity, or operate Fiber channel opens.</p>
         </div>
         {needsWalletReconnect ? (
           <div className="wallet-reconnect-note">
