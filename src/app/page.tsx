@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   CircleDollarSign,
   Copy,
+  Droplet,
   Landmark,
   ExternalLink,
   Loader2,
@@ -15,10 +16,10 @@ import {
   RadioTower,
   ReceiptText,
   Route,
+  Store,
   ShieldCheck,
   Sparkles,
   UserRound,
-  Waves,
 } from "lucide-react";
 import { ConsoleApp, type ConsoleView } from "./console";
 import { deployCkbScripts, type DeploymentProgressDetail, type DeploymentResult } from "@/lib/ckbDeployment";
@@ -389,7 +390,7 @@ const services: Service[] = [
     title: "Request receive capacity",
     kicker: "For merchants",
     description: "Reserve liquidity, attach a Fiber peer pubkey, and queue a channel open when your node is ready.",
-    icon: Route,
+    icon: Store,
   },
   {
     role: "operator",
@@ -1588,12 +1589,14 @@ export default function Home() {
       <section className="landing-hero">
         <nav className="topbar landing-topbar" aria-label="Primary navigation">
           <div className="brand">
-            <span className="brand-mark"><Waves size={18} /></span>
+            <span className="brand-mark"><Droplet size={22} /></span>
             <span>LiquidLane</span>
           </div>
-          <div className="nav-actions">
-            {dashboard ? <a href="#workspace">Workspace</a> : <a href="#services">Services</a>}
+          <div className="landing-nav-links">
+            <a className="active" href="#services">Services</a>
             <a href="#lifecycle">Lifecycle</a>
+          </div>
+          <div className="nav-actions">
             {ckbAddress ? (
               <span className="connected-pill" data-state={hasReadySession ? "active" : "restored"}>
                 <UserRound size={15} />
@@ -1638,11 +1641,6 @@ export default function Home() {
               </button>
               <a href="#lifecycle">View lifecycle</a>
             </div>
-          </div>
-          <div className="hero-metrics" aria-hidden="true">
-            <div><span>Vault</span><strong>{assetAmount(vaultSummary?.total_deposits ?? 0, vault?.asset ?? DEFAULT_ASSET)}</strong></div>
-            <div><span>Available</span><strong>{assetAmount(vaultSummary?.available_liquidity ?? 0, vault?.asset ?? DEFAULT_ASSET)}</strong></div>
-            <div><span>Network</span><strong>{vault?.network ?? "testnet"}</strong></div>
           </div>
         </div>
       </section>
