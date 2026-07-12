@@ -116,6 +116,9 @@ export function ConsoleApp(props: ConsoleAppProps) {
   const betaReady = coreHealth?.beta_ready ?? false;
   const executorEnabled = coreHealth?.executor_enabled ?? false;
   const pendingHandoffs = coreHealth?.executor_pending_handoffs ?? 0;
+  const fundingMode = coreHealth?.executor_funding_mode ?? "vault_external";
+  const vaultExternalMode = fundingMode === "vault_external";
+  const fundingModeLabel = vaultExternalMode ? "Vault external" : "Node diagnostic";
   const title = activeView === "vault" ? "Portfolio" : serviceLabel(activeView);
   const subtitle = activeView === "lp"
     ? "Supply vault capacity and track your LP position."
@@ -172,7 +175,8 @@ export function ConsoleApp(props: ConsoleAppProps) {
                 <span>CKB RPC {ckbRpcConfigured ? "configured" : "missing"}</span>
                 <span>Fiber RPC {fiberRpcConfigured ? "configured" : "missing"}</span>
                 <span>Executor {executorEnabled ? "auto" : "paused"}</span>
-                {pendingHandoffs ? <span>{pendingHandoffs} handoff{pendingHandoffs === 1 ? "" : "s"}</span> : null}
+                <span>Funding {fundingModeLabel}</span>
+                {pendingHandoffs ? <span>{pendingHandoffs} funding wait{pendingHandoffs === 1 ? "" : "s"}</span> : null}
                 <span>Beta {betaReady ? "ready" : "warming"}</span>
                 <span>Synced {new Intl.DateTimeFormat("en-US", { hour: "2-digit", minute: "2-digit" }).format(new Date())}</span>
                 <span>{status.length > 48 ? `${status.slice(0, 48)}...` : status}</span>
@@ -188,7 +192,7 @@ export function ConsoleApp(props: ConsoleAppProps) {
           {activeView === "lp" ? (
             <LiquidityProvisionView dashboard={dashboard} utilization={utilization} vaultReady={vaultReady} busy={busy} supplyTx={supplyTx} actionTx={actionTx} claimableFees={claimableFees} onDeposit={onDeposit} onWithdrawPosition={onWithdrawPosition} onClaimFees={onClaimFees} />
           ) : activeView === "merchant" ? (
-            <MerchantTerminalView dashboard={dashboard} busy={busy} quote={quote} fiberRpcConfigured={fiberRpcConfigured} onRequest={onRequest} />
+            <MerchantTerminalView dashboard={dashboard} busy={busy} quote={quote} fiberRpcConfigured={fiberRpcConfigured} fundingMode={fundingMode} onRequest={onRequest} />
           ) : (
             <VaultStatsView dashboard={dashboard} utilization={utilization} claimableFees={claimableFees} busy={busy} onWithdrawPosition={onWithdrawPosition} onClaimFees={onClaimFees} />
           )}
@@ -648,11 +652,12 @@ function requestActivityDescription(request: LiquidityRequest) {
   return request.merchant_name;
 }
 
-function MerchantTerminalView({ dashboard, busy, quote, fiberRpcConfigured, onRequest }: {
+function MerchantTerminalView({ dashboard, busy, quote, fiberRpcConfigured, fundingMode, onRequest }: {
   dashboard: Dashboard;
   busy: string | null;
   quote: LiquidityQuote | null;
   fiberRpcConfigured: boolean;
+  fundingMode: string;
   onRequest: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const vault = dashboard.vault;
@@ -663,7 +668,7 @@ function MerchantTerminalView({ dashboard, busy, quote, fiberRpcConfigured, onRe
         <div className="panel-title split-title">
           <div>
             <h2>Wallet Liquidity Access</h2>
-            <p>Capacity this merchant wallet can use or has already reserved from the live vault.</p>
+            <p>Capacity this merchant wallet has reserved from LP vault liquidity.</p>
           </div>
           <span className="count-pill">{shortAddress(dashboard.user.ckb_address)}</span>
         </div>
@@ -673,7 +678,7 @@ function MerchantTerminalView({ dashboard, busy, quote, fiberRpcConfigured, onRe
           <Metric label="Channel-open capacity" value={assetAmount(walletAccess.open, vault.asset)} />
           <Metric label="Lease fees posted" value={assetAmount(walletAccess.fees, vault.asset)} />
         </div>
-        <p className="merchant-access-note">Reserved capacity stays in the vault while LiquidLane automatically prepares the Fiber channel handoff.</p>
+        <p className="merchant-access-note">Reserved capacity stays protected in the vault until LiquidLane creates a vault-funded Fiber funding transaction.</p>
       </section>
 
       <section className="console-panel reserve-form-panel">
@@ -681,7 +686,7 @@ function MerchantTerminalView({ dashboard, busy, quote, fiberRpcConfigured, onRe
           <Link2 size={22} />
           <div>
             <h2>Reserve Liquidity</h2>
-            <p>Reserve receive capacity on-chain. LiquidLane starts the Fiber handoff automatically after the request confirms.</p>
+            <p>Reserve receive capacity on-chain. LiquidLane then prepares vault-funded Fiber execution from LP liquidity.</p>
           </div>
         </div>
         <div className="merchant-guidance">
@@ -726,7 +731,7 @@ function MerchantTerminalView({ dashboard, busy, quote, fiberRpcConfigured, onRe
           </div>
           <span className="count-pill">{dashboard.vault.active_requests} Active</span>
         </div>
-        <RequestQueue requests={dashboard.liquidity_requests} busy={busy} fiberRpcConfigured={fiberRpcConfigured} />
+        <RequestQueue requests={dashboard.liquidity_requests} busy={busy} fiberRpcConfigured={fiberRpcConfigured} fundingMode={fundingMode} />
       </section>
     </div>
   );
@@ -802,10 +807,11 @@ function ReserveTable({ dashboard }: { dashboard: Dashboard }) {
   );
 }
 
-function RequestQueue({ requests, busy, fiberRpcConfigured = true, compact = false }: {
+function RequestQueue({ requests, busy, fiberRpcConfigured = true, fundingMode = "vault_external", compact = false }: {
   requests: LiquidityRequest[];
   busy: string | null;
   fiberRpcConfigured?: boolean;
+  fundingMode?: string;
   compact?: boolean;
 }) {
   if (!requests.length) {
@@ -817,6 +823,7 @@ function RequestQueue({ requests, busy, fiberRpcConfigured = true, compact = fal
       {requests.map((request) => {
         const hasPeer = Boolean(request.fiber_peer_pubkey);
         const needsExecutor = !fiberRpcConfigured && (request.status === "requested" || request.status === "pending_fiber_channel");
+        const vaultExternalMode = fundingMode === "vault_external";
         return (
         <article className="queue-item" key={request.id} data-status={request.status}>
           <div>
@@ -829,11 +836,12 @@ function RequestQueue({ requests, busy, fiberRpcConfigured = true, compact = fal
               <code>Request: {shortId(request.request_cell_id)}</code>
               {request.request_tx_hash ? <TxMiniLink txHash={request.request_tx_hash} label="Request tx" /> : null}
               {request.fiber_note ? <span className="queue-note">{request.fiber_note}</span> : null}
-              {request.status === "pending_fiber_channel" ? <span className="queue-note">Vault liquidity remains reserved while LiquidLane waits for Fiber channel confirmation.</span> : null}
-              {request.status === "failed" && hasPeer ? <span className="queue-note">LiquidLane could not complete the Fiber handoff yet. The reserve remains visible for repair.</span> : null}
+              {request.status === "pending_fiber_channel" ? <span className="queue-note">Vault liquidity remains reserved while LiquidLane waits for Fiber external-funding confirmation.</span> : null}
+              {request.status === "failed" && hasPeer ? <span className="queue-note">LiquidLane could not complete vault-funded Fiber execution yet. The reserve remains visible for repair.</span> : null}
+              {!vaultExternalMode ? <span className="queue-note">Diagnostic mode: node-wallet funding is not product capacity.</span> : null}
               {request.status === "released" || request.status === "expired" ? <span className="queue-note">This reservation is no longer active; vault liquidity is available again.</span> : null}
               {request.fiber_error ? <span className="error-text">{request.fiber_error}</span> : null}
-              {needsExecutor ? <span className="queue-note">LiquidLane executor is waiting for Fiber RPC before channel handoff.</span> : null}
+              {needsExecutor ? <span className="queue-note">LiquidLane executor is waiting for Fiber RPC before vault-funded execution.</span> : null}
               {!hasPeer ? <span className="error-text">Merchant Fiber pubkey is required before LiquidLane can execute this request.</span> : null}
             </div>
           </div>

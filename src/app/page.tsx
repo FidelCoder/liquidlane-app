@@ -257,6 +257,10 @@ export type HealthStatus = {
   executor_funding_mode: string;
   executor_queued_requests: number;
   executor_pending_handoffs: number;
+  external_funding_supported?: boolean;
+  external_funding_ready?: boolean;
+  vault_external_required?: boolean;
+  node_wallet_diagnostic?: boolean;
 };
 
 type PublicRole = Exclude<Role, "operator">;
@@ -1573,11 +1577,11 @@ function settlementStepLabel(step: SettlementProgressStep) {
 
 function requestSuccessMessage(request: LiquidityRequest, amount: number, asset: string) {
   const capacity = assetAmount(amount, asset);
-  if (request.status === "pending_fiber_channel") return `${capacity} is reserved. LiquidLane submitted the Fiber handoff and is waiting for channel confirmation.`;
-  if (request.status === "channel_open") return `${capacity} is reserved and the Fiber channel is confirmed.`;
-  if (request.status === "failed") return `${capacity} is reserved on-chain, but the Fiber handoff needs repair: ${request.fiber_error ?? "unknown Fiber error"}`;
+  if (request.status === "pending_fiber_channel") return `${capacity} is reserved. LiquidLane is preparing vault-funded Fiber execution and waiting for channel confirmation.`;
+  if (request.status === "channel_open") return `${capacity} is active through a confirmed Fiber channel.`;
+  if (request.status === "failed") return `${capacity} is reserved on-chain, but vault-funded Fiber execution needs repair: ${request.fiber_error ?? "unknown Fiber error"}`;
   if (request.status === "expired" || request.status === "released") return `${capacity} reservation is no longer active; liquidity is back in the vault.`;
-  return `${capacity} is reserved on-chain. LiquidLane executor will process the Fiber handoff.`;
+  return `${capacity} is reserved on-chain. LiquidLane will process vault-funded Fiber execution.`;
 }
 
 function isFiberPubkey(pubkey: string | undefined) {
