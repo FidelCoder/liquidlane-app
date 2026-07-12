@@ -358,6 +358,10 @@ function LiquidityVaultCard({ dashboard, utilization, vaultReady, busy, supplyTx
         <Metric label="Global available" value={assetAmount(vault.available_liquidity, vault.asset)} />
         <Metric label="Yield accrued" value={assetAmount(vault.fees_earned, vault.asset)} />
       </div>
+      <div className="lp-risk-note">
+        <strong>Withdrawable now: {assetAmount(totalAvailable, vault.asset)}</strong>
+        <span>Reserved or deployed liquidity stays locked by vault rules until a request is released or a Fiber channel settles.</span>
+      </div>
       <div className="vault-card-divider" />
       <div className="vault-mode-switch" role="tablist" aria-label="Vault action mode">
         <button type="button" data-active={mode === "supply"} onClick={() => setMode("supply")}>
@@ -624,7 +628,7 @@ function buildTransactionActivity(dashboard: Dashboard): TransactionActivityEntr
     .filter((request) => request.request_tx_hash)
     .map((request) => ({
       id: `request-${request.id}`,
-      kind: request.status === "funding_required" || request.status === "funding_submitted" || request.status === "pending_fiber_channel" || request.status === "channel_open" ? "channel" as const : "reserve" as const,
+      kind: request.status === "funding_required" || request.status === "funding_submitted" || request.status === "pending_fiber_channel" || request.status === "channel_open" || request.status === "settled" ? "channel" as const : "reserve" as const,
       title: requestActivityTitle(request),
       description: requestActivityDescription(request),
       amount: request.amount,
@@ -641,6 +645,7 @@ function buildTransactionActivity(dashboard: Dashboard): TransactionActivityEntr
 
 function requestActivityTitle(request: LiquidityRequest) {
   if (request.status === "channel_open") return "Fiber channel active";
+  if (request.status === "settled") return "Fiber channel settled";
   if (request.status === "funding_required") return "Vault funding required";
   if (request.status === "funding_submitted") return "Vault funding submitted";
   if (request.status === "pending_fiber_channel") return "Fiber confirmation pending";
@@ -654,6 +659,7 @@ function requestActivityDescription(request: LiquidityRequest) {
   if (request.status === "funding_submitted") return `${request.merchant_name} is waiting for Fiber to report the channel active`;
   if (request.status === "pending_fiber_channel") return `${request.merchant_name} is waiting for channel confirmation`;
   if (request.status === "channel_open") return `${request.merchant_name} can receive through the opened lane`;
+  if (request.status === "settled") return `${request.merchant_name} channel settled and LP liquidity returned`;
   if (request.status === "released" || request.status === "expired") return `${request.merchant_name} reservation returned to vault availability`;
   if (request.status === "failed") return `${request.merchant_name} request needs repair before execution`;
   return request.merchant_name;
@@ -685,8 +691,10 @@ function MerchantTerminalView({ dashboard, busy, quote, fiberRpcConfigured, fund
           <Metric label="Channel-open capacity" value={assetAmount(walletAccess.open, vault.asset)} />
           <Metric label="Lease fees posted" value={assetAmount(walletAccess.fees, vault.asset)} />
         </div>
-        <p className="merchant-access-note">Reserved capacity stays protected in the vault until LiquidLane creates a vault-funded Fiber funding transaction.</p>
+        <p className="merchant-access-note">Reserved capacity is not usable yet. It becomes usable only after the vault-funded CKB funding transaction confirms and Fiber reports the channel active.</p>
       </section>
+
+      <MerchantCapacityTimeline requests={dashboard.liquidity_requests} />
 
       <section className="console-panel reserve-form-panel">
         <div className="panel-title">
@@ -744,6 +752,54 @@ function MerchantTerminalView({ dashboard, busy, quote, fiberRpcConfigured, fund
   );
 }
 
+
+
+function MerchantCapacityTimeline({ requests }: { requests: LiquidityRequest[] }) {
+  const latest = [...requests].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
+  const steps = merchantTimelineSteps(latest);
+
+  return (
+    <section className="console-panel merchant-timeline-panel">
+      <div className="panel-title split-title">
+        <div>
+          <h2>Capacity Status</h2>
+          <p>{latest ? "Latest merchant request lifecycle." : "Reserve capacity to start the lifecycle."}</p>
+        </div>
+        {latest ? <span className="status-tag" data-status={latest.status}>{statusLabel(latest.status)}</span> : null}
+      </div>
+      <div className="capacity-timeline">
+        {steps.map((step) => (
+          <div key={step.label} data-state={step.state}>
+            <span>{step.state === "done" ? <CheckCircle2 size={15} /> : step.state === "active" ? <Loader2 size={15} className="spin" /> : <AlertTriangle size={15} />}</span>
+            <strong>{step.label}</strong>
+            <small>{step.text}</small>
+          </div>
+        ))}
+      </div>
+      {latest?.request_tx_hash ? <TxMiniLink txHash={latest.request_tx_hash} label="Request tx" /> : null}
+      {latest?.fiber_error ? <p className="error-text">{latest.fiber_error}</p> : null}
+    </section>
+  );
+}
+
+function merchantTimelineSteps(request?: LiquidityRequest) {
+  const base = [
+    { label: "Request confirmed", text: "Capacity request cell accepted on CKB.", state: "waiting" },
+    { label: "Vault reserved", text: "LP liquidity is reserved for this merchant.", state: "waiting" },
+    { label: "Funding transaction", text: "Vault-funded CKB transaction prepares Fiber capacity.", state: "waiting" },
+    { label: "Channel active", text: "Fiber reports usable receive capacity.", state: "waiting" },
+  ];
+  if (!request) return base;
+  const index = request.status === "settled" || request.status === "channel_open" ? 3
+    : request.status === "funding_submitted" || request.status === "pending_fiber_channel" ? 2
+    : request.status === "funding_required" || request.status === "requested" ? 1
+    : request.status === "failed" ? 2
+    : 0;
+  return base.map((step, stepIndex) => ({
+    ...step,
+    state: request.status === "settled" || request.status === "channel_open" ? (stepIndex <= index ? "done" : "waiting") : stepIndex < index ? "done" : stepIndex === index ? (request.status === "failed" ? "failed" : "active") : "waiting",
+  }));
+}
 
 function merchantWalletAccess(dashboard: Dashboard) {
   const activeReservations = dashboard.reservations.filter((reservation) => reservation.status === "reserved");
@@ -847,6 +903,7 @@ function RequestQueue({ requests, busy, fiberRpcConfigured = true, fundingMode =
               {request.status === "funding_submitted" ? <span className="queue-note">Vault-funded CKB transaction was submitted. Waiting for Fiber to report the channel active.</span> : null}
               {request.status === "pending_fiber_channel" ? <span className="queue-note">Vault liquidity remains reserved while LiquidLane waits for Fiber external-funding confirmation.</span> : null}
               {request.status === "failed" && hasPeer ? <span className="queue-note">LiquidLane could not complete vault-funded Fiber execution. The reserve remains visible for repair or release.</span> : null}
+              {request.status === "settled" ? <span className="queue-note">This Fiber channel settled; LP liquidity is back in vault availability.</span> : null}
               {!vaultExternalMode ? <span className="queue-note">Diagnostic mode: node-wallet funding is not product capacity.</span> : null}
               {request.status === "released" || request.status === "expired" ? <span className="queue-note">This reservation is no longer active; vault liquidity is available again.</span> : null}
               {request.fiber_error ? <span className="error-text">{request.fiber_error}</span> : null}

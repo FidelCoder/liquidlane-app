@@ -29,7 +29,7 @@ import {
 } from "@/lib/ckbWallet";
 
 export type Role = "lp" | "merchant" | "operator";
-export type LiquidityStatus = "requested" | "funding_required" | "funding_submitted" | "pending_fiber_channel" | "channel_open" | "failed" | "expired" | "released";
+export type LiquidityStatus = "requested" | "funding_required" | "funding_submitted" | "pending_fiber_channel" | "channel_open" | "failed" | "expired" | "released" | "settled";
 
 export type UserProfile = {
   id: string;
@@ -53,6 +53,8 @@ export type VaultScripts = {
   lp_receipt_type_out_point: string | null;
   request_type_code_hash: string | null;
   request_type_out_point: string | null;
+  funding_intent_type_code_hash?: string | null;
+  funding_intent_type_out_point?: string | null;
   fee_claim_type_code_hash: string | null;
   fee_claim_type_out_point: string | null;
 };
@@ -63,6 +65,7 @@ export type VaultConfig = {
   cell_out_point?: string | null;
   network: string;
   configured: boolean;
+  script_version?: string;
   scripts?: VaultScripts;
 };
 
@@ -1582,6 +1585,7 @@ function requestSuccessMessage(request: LiquidityRequest, amount: number, asset:
   if (request.status === "funding_submitted") return `${capacity} is reserved and the vault-funded Fiber transaction has been submitted. Waiting for active channel confirmation.`;
   if (request.status === "pending_fiber_channel") return `${capacity} is reserved. LiquidLane is waiting for Fiber channel confirmation.`;
   if (request.status === "channel_open") return `${capacity} is active through a confirmed Fiber channel.`;
+  if (request.status === "settled") return `${capacity} channel has settled and LP liquidity is back in the vault.`;
   if (request.status === "failed") return `${capacity} is reserved on-chain, but vault-funded Fiber execution needs repair: ${request.fiber_error ?? "unknown Fiber error"}`;
   if (request.status === "expired" || request.status === "released") return `${capacity} reservation is no longer active; liquidity is back in the vault.`;
   return `${capacity} is reserved on-chain. LiquidLane will prepare vault-funded Fiber execution from LP vault liquidity.`;
