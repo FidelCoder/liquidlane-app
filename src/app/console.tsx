@@ -118,7 +118,9 @@ export function ConsoleApp(props: ConsoleAppProps) {
   const pendingHandoffs = coreHealth?.executor_pending_handoffs ?? 0;
   const fundingMode = coreHealth?.executor_funding_mode ?? "vault_external";
   const vaultExternalMode = fundingMode === "vault_external";
-  const fundingModeLabel = vaultExternalMode ? "Vault external" : "Node diagnostic";
+  const externalFundingReady = coreHealth?.external_funding_ready ?? false;
+  const externalFundingBlocker = coreHealth?.external_funding_blockers?.[0];
+  const fundingModeLabel = vaultExternalMode ? (externalFundingReady ? "Vault external ready" : "Vault funding pending") : "Node diagnostic";
   const title = activeView === "vault" ? "Portfolio" : serviceLabel(activeView);
   const subtitle = activeView === "lp"
     ? "Supply vault capacity and track your LP position."
@@ -176,6 +178,7 @@ export function ConsoleApp(props: ConsoleAppProps) {
                 <span>Fiber RPC {fiberRpcConfigured ? "configured" : "missing"}</span>
                 <span>Executor {executorEnabled ? "auto" : "paused"}</span>
                 <span>Funding {fundingModeLabel}</span>
+                {vaultExternalMode && !externalFundingReady && externalFundingBlocker ? <span>{externalFundingBlocker.length > 40 ? `${externalFundingBlocker.slice(0, 40)}...` : externalFundingBlocker}</span> : null}
                 {pendingHandoffs ? <span>{pendingHandoffs} funding wait{pendingHandoffs === 1 ? "" : "s"}</span> : null}
                 <span>Beta {betaReady ? "ready" : "warming"}</span>
                 <span>Synced {new Intl.DateTimeFormat("en-US", { hour: "2-digit", minute: "2-digit" }).format(new Date())}</span>
@@ -621,7 +624,7 @@ function buildTransactionActivity(dashboard: Dashboard): TransactionActivityEntr
     .filter((request) => request.request_tx_hash)
     .map((request) => ({
       id: `request-${request.id}`,
-      kind: request.status === "pending_fiber_channel" || request.status === "channel_open" ? "channel" as const : "reserve" as const,
+      kind: request.status === "funding_required" || request.status === "funding_submitted" || request.status === "pending_fiber_channel" || request.status === "channel_open" ? "channel" as const : "reserve" as const,
       title: requestActivityTitle(request),
       description: requestActivityDescription(request),
       amount: request.amount,
@@ -638,13 +641,17 @@ function buildTransactionActivity(dashboard: Dashboard): TransactionActivityEntr
 
 function requestActivityTitle(request: LiquidityRequest) {
   if (request.status === "channel_open") return "Fiber channel active";
-  if (request.status === "pending_fiber_channel") return "Fiber handoff pending";
+  if (request.status === "funding_required") return "Vault funding required";
+  if (request.status === "funding_submitted") return "Vault funding submitted";
+  if (request.status === "pending_fiber_channel") return "Fiber confirmation pending";
   if (request.status === "released" || request.status === "expired") return "Capacity released";
   if (request.status === "failed") return "Capacity request failed";
   return "Reserve capacity";
 }
 
 function requestActivityDescription(request: LiquidityRequest) {
+  if (request.status === "funding_required") return `${request.merchant_name} has reserved LP liquidity; funding transaction is next`;
+  if (request.status === "funding_submitted") return `${request.merchant_name} is waiting for Fiber to report the channel active`;
   if (request.status === "pending_fiber_channel") return `${request.merchant_name} is waiting for channel confirmation`;
   if (request.status === "channel_open") return `${request.merchant_name} can receive through the opened lane`;
   if (request.status === "released" || request.status === "expired") return `${request.merchant_name} reservation returned to vault availability`;
@@ -822,7 +829,7 @@ function RequestQueue({ requests, busy, fiberRpcConfigured = true, fundingMode =
     <div className={compact ? "request-queue compact" : "request-queue"}>
       {requests.map((request) => {
         const hasPeer = Boolean(request.fiber_peer_pubkey);
-        const needsExecutor = !fiberRpcConfigured && (request.status === "requested" || request.status === "pending_fiber_channel");
+        const needsExecutor = !fiberRpcConfigured && (request.status === "requested" || request.status === "funding_required" || request.status === "funding_submitted" || request.status === "pending_fiber_channel");
         const vaultExternalMode = fundingMode === "vault_external";
         return (
         <article className="queue-item" key={request.id} data-status={request.status}>
@@ -836,8 +843,10 @@ function RequestQueue({ requests, busy, fiberRpcConfigured = true, fundingMode =
               <code>Request: {shortId(request.request_cell_id)}</code>
               {request.request_tx_hash ? <TxMiniLink txHash={request.request_tx_hash} label="Request tx" /> : null}
               {request.fiber_note ? <span className="queue-note">{request.fiber_note}</span> : null}
+              {request.status === "funding_required" ? <span className="queue-note">Vault liquidity is reserved. LiquidLane still needs the v2 vault-funded CKB funding transaction before Fiber can become usable.</span> : null}
+              {request.status === "funding_submitted" ? <span className="queue-note">Vault-funded CKB transaction was submitted. Waiting for Fiber to report the channel active.</span> : null}
               {request.status === "pending_fiber_channel" ? <span className="queue-note">Vault liquidity remains reserved while LiquidLane waits for Fiber external-funding confirmation.</span> : null}
-              {request.status === "failed" && hasPeer ? <span className="queue-note">LiquidLane could not complete vault-funded Fiber execution yet. The reserve remains visible for repair.</span> : null}
+              {request.status === "failed" && hasPeer ? <span className="queue-note">LiquidLane could not complete vault-funded Fiber execution. The reserve remains visible for repair or release.</span> : null}
               {!vaultExternalMode ? <span className="queue-note">Diagnostic mode: node-wallet funding is not product capacity.</span> : null}
               {request.status === "released" || request.status === "expired" ? <span className="queue-note">This reservation is no longer active; vault liquidity is available again.</span> : null}
               {request.fiber_error ? <span className="error-text">{request.fiber_error}</span> : null}

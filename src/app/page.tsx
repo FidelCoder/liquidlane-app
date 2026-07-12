@@ -29,7 +29,7 @@ import {
 } from "@/lib/ckbWallet";
 
 export type Role = "lp" | "merchant" | "operator";
-export type LiquidityStatus = "requested" | "pending_fiber_channel" | "channel_open" | "failed" | "expired" | "released";
+export type LiquidityStatus = "requested" | "funding_required" | "funding_submitted" | "pending_fiber_channel" | "channel_open" | "failed" | "expired" | "released";
 
 export type UserProfile = {
   id: string;
@@ -259,6 +259,7 @@ export type HealthStatus = {
   executor_pending_handoffs: number;
   external_funding_supported?: boolean;
   external_funding_ready?: boolean;
+  external_funding_blockers?: string[];
   vault_external_required?: boolean;
   node_wallet_diagnostic?: boolean;
 };
@@ -1577,11 +1578,13 @@ function settlementStepLabel(step: SettlementProgressStep) {
 
 function requestSuccessMessage(request: LiquidityRequest, amount: number, asset: string) {
   const capacity = assetAmount(amount, asset);
-  if (request.status === "pending_fiber_channel") return `${capacity} is reserved. LiquidLane is preparing vault-funded Fiber execution and waiting for channel confirmation.`;
+  if (request.status === "funding_required") return `${capacity} is reserved on-chain. LiquidLane still needs the vault-funded CKB funding transaction before the Fiber channel can open.`;
+  if (request.status === "funding_submitted") return `${capacity} is reserved and the vault-funded Fiber transaction has been submitted. Waiting for active channel confirmation.`;
+  if (request.status === "pending_fiber_channel") return `${capacity} is reserved. LiquidLane is waiting for Fiber channel confirmation.`;
   if (request.status === "channel_open") return `${capacity} is active through a confirmed Fiber channel.`;
   if (request.status === "failed") return `${capacity} is reserved on-chain, but vault-funded Fiber execution needs repair: ${request.fiber_error ?? "unknown Fiber error"}`;
   if (request.status === "expired" || request.status === "released") return `${capacity} reservation is no longer active; liquidity is back in the vault.`;
-  return `${capacity} is reserved on-chain. LiquidLane will process vault-funded Fiber execution.`;
+  return `${capacity} is reserved on-chain. LiquidLane will prepare vault-funded Fiber execution from LP vault liquidity.`;
 }
 
 function isFiberPubkey(pubkey: string | undefined) {
