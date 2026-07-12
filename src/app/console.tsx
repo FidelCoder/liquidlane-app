@@ -22,7 +22,6 @@ import {
   Loader2,
   LogOut,
   PlusCircle,
-  RadioTower,
   ReceiptText,
   Route,
   Settings,
@@ -43,7 +42,7 @@ import type {
   SupplyTxState,
 } from "./page";
 
-export type ConsoleView = Role | "vault";
+export type ConsoleView = Exclude<Role, "operator"> | "vault";
 
 const DEFAULT_ASSET = "CKB";
 const EXPLORER_BASE = process.env.NEXT_PUBLIC_CKB_EXPLORER_URL ?? "https://pudge.explorer.nervos.org";
@@ -73,17 +72,14 @@ export type ConsoleAppProps = {
   onRefresh: () => void | Promise<void>;
   onDeposit: (event: FormEvent<HTMLFormElement>) => void;
   onRequest: (event: FormEvent<HTMLFormElement>) => void;
-  onOpenFiberChannel: (id: string) => void;
-  onAttachFiberPeer: (id: string, event: FormEvent<HTMLFormElement>) => void;
   onWithdrawPosition: (id: string, amount?: number) => void;
   onClaimFees: (id: string) => void;
 };
 
 const consoleItems: { view: ConsoleView; label: string; detail: string; icon: typeof CircleDollarSign }[] = [
-  { view: "lp", label: "Liquidity Provision", detail: "Supply vault capacity", icon: CircleDollarSign },
-  { view: "merchant", label: "Merchant Terminal", detail: "Reserve receive capacity", icon: Store },
-  { view: "operator", label: "Node Console", detail: "Operate Fiber lanes", icon: RadioTower },
-  { view: "vault", label: "Vault Stats", detail: "Audit accounting", icon: Landmark },
+  { view: "lp", label: "Supply Liquidity", detail: "Supply vault capacity", icon: CircleDollarSign },
+  { view: "merchant", label: "Request Capacity", detail: "Reserve receive capacity", icon: Store },
+  { view: "vault", label: "Portfolio", detail: "Vault and activity", icon: Landmark },
 ];
 
 export function ConsoleApp(props: ConsoleAppProps) {
@@ -112,23 +108,20 @@ export function ConsoleApp(props: ConsoleAppProps) {
     onRefresh,
     onDeposit,
     onRequest,
-    onOpenFiberChannel,
-    onAttachFiberPeer,
     onWithdrawPosition,
     onClaimFees,
   } = props;
   const vault = dashboard.vault;
   const ckbRpcConfigured = coreHealth?.ckb_rpc_configured ?? false;
   const betaReady = coreHealth?.beta_ready ?? false;
-  const consoleRole = activeView === "vault" ? dashboard.user.role : activeView;
-  const title = activeView === "vault" ? "Vault Accounting" : serviceLabel(consoleRole);
+  const executorEnabled = coreHealth?.executor_enabled ?? false;
+  const pendingHandoffs = coreHealth?.executor_pending_handoffs ?? 0;
+  const title = activeView === "vault" ? "Portfolio" : serviceLabel(activeView);
   const subtitle = activeView === "lp"
-    ? "Provision capacity and monitor LP receipts."
+    ? "Supply vault capacity and track your LP position."
     : activeView === "merchant"
-      ? "Reserve inbound channel capacity against live vault liquidity."
-      : activeView === "operator"
-        ? "Coordinate channel opens and lane health."
-        : "Inspect vault state, settlements, and activity.";
+      ? "Reserve inbound capacity while LiquidLane handles Fiber execution."
+      : "Inspect personal vault state, settlements, and activity.";
 
   return (
     <main className="console-shell">
@@ -178,6 +171,8 @@ export function ConsoleApp(props: ConsoleAppProps) {
                 <span>Vault {vault.configured ? "configured" : "pending"}</span>
                 <span>CKB RPC {ckbRpcConfigured ? "configured" : "missing"}</span>
                 <span>Fiber RPC {fiberRpcConfigured ? "configured" : "missing"}</span>
+                <span>Executor {executorEnabled ? "auto" : "paused"}</span>
+                {pendingHandoffs ? <span>{pendingHandoffs} handoff{pendingHandoffs === 1 ? "" : "s"}</span> : null}
                 <span>Beta {betaReady ? "ready" : "warming"}</span>
                 <span>Synced {new Intl.DateTimeFormat("en-US", { hour: "2-digit", minute: "2-digit" }).format(new Date())}</span>
                 <span>{status.length > 48 ? `${status.slice(0, 48)}...` : status}</span>
@@ -193,9 +188,7 @@ export function ConsoleApp(props: ConsoleAppProps) {
           {activeView === "lp" ? (
             <LiquidityProvisionView dashboard={dashboard} utilization={utilization} vaultReady={vaultReady} busy={busy} supplyTx={supplyTx} actionTx={actionTx} claimableFees={claimableFees} onDeposit={onDeposit} onWithdrawPosition={onWithdrawPosition} onClaimFees={onClaimFees} />
           ) : activeView === "merchant" ? (
-            <MerchantTerminalView dashboard={dashboard} busy={busy} quote={quote} fiberRpcConfigured={fiberRpcConfigured} onRequest={onRequest} onOpenFiberChannel={onOpenFiberChannel} onAttachFiberPeer={onAttachFiberPeer} />
-          ) : activeView === "operator" ? (
-            <NodeConsoleView dashboard={dashboard} busy={busy} utilization={utilization} fiberRpcConfigured={fiberRpcConfigured} onOpenFiberChannel={onOpenFiberChannel} onAttachFiberPeer={onAttachFiberPeer} />
+            <MerchantTerminalView dashboard={dashboard} busy={busy} quote={quote} fiberRpcConfigured={fiberRpcConfigured} onRequest={onRequest} />
           ) : (
             <VaultStatsView dashboard={dashboard} utilization={utilization} claimableFees={claimableFees} busy={busy} onWithdrawPosition={onWithdrawPosition} onClaimFees={onClaimFees} />
           )}
@@ -607,14 +600,12 @@ function buildTransactionActivity(dashboard: Dashboard): TransactionActivityEntr
     .slice(0, 10);
 }
 
-function MerchantTerminalView({ dashboard, busy, quote, fiberRpcConfigured, onRequest, onOpenFiberChannel, onAttachFiberPeer }: {
+function MerchantTerminalView({ dashboard, busy, quote, fiberRpcConfigured, onRequest }: {
   dashboard: Dashboard;
   busy: string | null;
   quote: LiquidityQuote | null;
   fiberRpcConfigured: boolean;
   onRequest: (event: FormEvent<HTMLFormElement>) => void;
-  onOpenFiberChannel: (id: string) => void;
-  onAttachFiberPeer: (id: string, event: FormEvent<HTMLFormElement>) => void;
 }) {
   const vault = dashboard.vault;
   const walletAccess = merchantWalletAccess(dashboard);
@@ -634,7 +625,7 @@ function MerchantTerminalView({ dashboard, busy, quote, fiberRpcConfigured, onRe
           <Metric label="Channel-open capacity" value={assetAmount(walletAccess.open, vault.asset)} />
           <Metric label="Lease fees posted" value={assetAmount(walletAccess.fees, vault.asset)} />
         </div>
-        <p className="merchant-access-note">Reserved capacity stays in the vault until an operator opens the Fiber channel or the request is released.</p>
+        <p className="merchant-access-note">Reserved capacity stays in the vault while LiquidLane automatically prepares the Fiber channel handoff.</p>
       </section>
 
       <section className="console-panel reserve-form-panel">
@@ -642,7 +633,7 @@ function MerchantTerminalView({ dashboard, busy, quote, fiberRpcConfigured, onRe
           <Link2 size={22} />
           <div>
             <h2>Reserve Liquidity</h2>
-            <p>Reserve receive capacity on-chain. Operators open the Fiber channel after it appears in the queue.</p>
+            <p>Reserve receive capacity on-chain. LiquidLane starts the Fiber handoff automatically after the request confirms.</p>
           </div>
         </div>
         <div className="merchant-guidance">
@@ -683,11 +674,11 @@ function MerchantTerminalView({ dashboard, busy, quote, fiberRpcConfigured, onRe
         <div className="panel-title split-title">
           <div>
             <h2>Capacity Queue</h2>
-            <p>{dashboard.liquidity_requests.length} request{dashboard.liquidity_requests.length === 1 ? "" : "s"} tracked by Core.</p>
+            <p>{dashboard.liquidity_requests.length} request{dashboard.liquidity_requests.length === 1 ? "" : "s"} tracked by LiquidLane.</p>
           </div>
           <span className="count-pill">{dashboard.vault.active_requests} Active</span>
         </div>
-        <RequestQueue requests={dashboard.liquidity_requests} busy={busy} canOpen fiberRpcConfigured={fiberRpcConfigured} onOpenFiberChannel={onOpenFiberChannel} onAttachFiberPeer={onAttachFiberPeer} />
+        <RequestQueue requests={dashboard.liquidity_requests} busy={busy} fiberRpcConfigured={fiberRpcConfigured} />
       </section>
     </div>
   );
@@ -705,88 +696,6 @@ function merchantWalletAccess(dashboard: Dashboard) {
   };
 }
 
-function handoffMessage(total: number, ready: number, missingPeer: number, fiberRpcConfigured: boolean) {
-  if (!total) return "The lane is waiting for merchant requests backed by vault liquidity.";
-  if (missingPeer && !ready) return "On-chain reservations were recovered, but Fiber peer details must be attached before channel open.";
-  if (missingPeer) return `${ready} request${ready === 1 ? "" : "s"} can open now. ${missingPeer} recovered request${missingPeer === 1 ? "" : "s"} need Fiber peer details.`;
-  return fiberRpcConfigured
-    ? "Reserved requests are ready for the configured Fiber RPC node."
-    : "Reserved requests are waiting for Core to be connected to a Fiber RPC node.";
-}
-
-function NodeConsoleView({ dashboard, busy, utilization, fiberRpcConfigured, onOpenFiberChannel, onAttachFiberPeer }: {
-  dashboard: Dashboard;
-  busy: string | null;
-  utilization: number;
-  fiberRpcConfigured: boolean;
-  onOpenFiberChannel: (id: string) => void;
-  onAttachFiberPeer: (id: string, event: FormEvent<HTMLFormElement>) => void;
-}) {
-  const vault = dashboard.vault;
-  const openChannels = dashboard.liquidity_requests.filter((request) => request.status === "channel_open").length;
-  const pending = dashboard.liquidity_requests.filter((request) => request.status === "requested" || request.status === "pending_fiber_channel");
-  const readyPending = pending.filter((request) => Boolean(request.fiber_peer_pubkey)).length;
-  const missingPeer = pending.length - readyPending;
-  const operations = dashboard.liquidity_requests.filter((request) =>
-    request.status === "pending_fiber_channel" || request.status === "channel_open" || request.status === "failed"
-  );
-  return (
-    <div className="operator-layout">
-      <section className="operator-stats">
-        <div className="stat-card">
-          <span>Total Vault Capacity</span>
-          <strong>{assetAmount(vault.total_deposits, vault.asset)}</strong>
-          <small>{assetAmount(vault.available_liquidity, vault.asset)} available</small>
-        </div>
-        <div className="stat-card">
-          <span>Pending Routing Fees</span>
-          <strong>{assetAmount(vault.fees_earned, vault.asset)}</strong>
-          <div className="thin-meter"><i style={{ width: `${Math.max(Math.min(utilization, 100), 4)}%` }} /></div>
-        </div>
-        <div className="stat-card">
-          <span>Active Fiber Channels</span>
-          <strong>{openChannels}</strong>
-          <small>{readyPending} ready / {missingPeer} need peer</small>
-        </div>
-      </section>
-
-      <section className="topology-panel" aria-label="Fiber handoff readiness">
-        <div className="topology-image" />
-        <div className="topology-content">
-          <span className="topology-badge">{pending.length ? `${pending.length} pending` : "No pending opens"}</span>
-          <h2>Fiber handoff readiness</h2>
-          <p>{handoffMessage(pending.length, readyPending, missingPeer, fiberRpcConfigured)}</p>
-          <div className="topology-stats">
-            <div><strong>{openChannels}</strong><span>open channels</span></div>
-            <div><strong>{readyPending}</strong><span>ready opens</span></div>
-            <div><strong>{assetAmount(vault.pending_channel_liquidity, vault.asset)}</strong><span>in handoff</span></div>
-          </div>
-        </div>
-      </section>
-
-      <section className="console-panel">
-        <div className="panel-title split-title">
-          <div>
-            <h2>Capacity Request Queue</h2>
-            <p>Requests waiting on channel open execution.</p>
-          </div>
-          <Filter size={18} />
-        </div>
-        <RequestQueue requests={dashboard.liquidity_requests} busy={busy} canOpen fiberRpcConfigured={fiberRpcConfigured} onOpenFiberChannel={onOpenFiberChannel} onAttachFiberPeer={onAttachFiberPeer} compact />
-      </section>
-
-      <section className="console-panel operations-panel">
-        <div className="panel-title split-title">
-          <div>
-            <h2>Open Operations</h2>
-            <p>Fiber channel execution status.</p>
-          </div>
-        </div>
-        <FiberOperationList requests={operations} />
-      </section>
-    </div>
-  );
-}
 
 function VaultStatsView({ dashboard, utilization, claimableFees, busy, onWithdrawPosition, onClaimFees }: {
   dashboard: Dashboard;
@@ -845,13 +754,10 @@ function ReserveTable({ dashboard }: { dashboard: Dashboard }) {
   );
 }
 
-function RequestQueue({ requests, busy, canOpen, fiberRpcConfigured = true, onOpenFiberChannel, onAttachFiberPeer, compact = false }: {
+function RequestQueue({ requests, busy, fiberRpcConfigured = true, compact = false }: {
   requests: LiquidityRequest[];
   busy: string | null;
-  canOpen: boolean;
   fiberRpcConfigured?: boolean;
-  onOpenFiberChannel: (id: string) => void;
-  onAttachFiberPeer: (id: string, event: FormEvent<HTMLFormElement>) => void;
   compact?: boolean;
 }) {
   if (!requests.length) {
@@ -862,13 +768,7 @@ function RequestQueue({ requests, busy, canOpen, fiberRpcConfigured = true, onOp
     <div className={compact ? "request-queue compact" : "request-queue"}>
       {requests.map((request) => {
         const hasPeer = Boolean(request.fiber_peer_pubkey);
-        const openDisabled = busy === request.id || !fiberRpcConfigured || !hasPeer;
-        const openLabel = !hasPeer ? "Peer missing" : fiberRpcConfigured ? "Open Fiber" : "Fiber RPC missing";
-        const openTitle = !hasPeer
-          ? "This on-chain request needs Fiber peer details reattached before channel open."
-          : !fiberRpcConfigured
-            ? "Set FIBER_RPC_URL on Core before opening Fiber channels."
-            : "Open Fiber channel";
+        const needsExecutor = !fiberRpcConfigured && (request.status === "requested" || request.status === "pending_fiber_channel");
         return (
         <article className="queue-item" key={request.id} data-status={request.status}>
           <div>
@@ -881,26 +781,16 @@ function RequestQueue({ requests, busy, canOpen, fiberRpcConfigured = true, onOp
               <code>Request: {shortId(request.request_cell_id)}</code>
               {request.request_tx_hash ? <TxMiniLink txHash={request.request_tx_hash} label="Request tx" /> : null}
               {request.fiber_note ? <span className="queue-note">{request.fiber_note}</span> : null}
+              {request.status === "pending_fiber_channel" ? <span className="queue-note">Vault liquidity remains reserved while LiquidLane waits for Fiber channel confirmation.</span> : null}
+              {request.status === "failed" && hasPeer ? <span className="queue-note">LiquidLane could not complete the Fiber handoff yet. The reserve remains visible for repair.</span> : null}
               {request.fiber_error ? <span className="error-text">{request.fiber_error}</span> : null}
-              {request.status === "requested" && canOpen && !fiberRpcConfigured ? <span className="error-text">Set FIBER_RPC_URL on Core before opening this channel.</span> : null}
-              {request.status === "requested" && canOpen && !hasPeer ? (
-                <form className="peer-attach-form" onSubmit={(event) => onAttachFiberPeer(request.id, event)}>
-                  <input name="fiber_peer_pubkey" placeholder="Fiber pubkey 02..." required />
-                  <input name="fiber_peer_address" placeholder="/ip4/.../tcp/8228/p2p/... optional" />
-                  <button type="submit" className="ghost-button small" disabled={busy === `peer-${request.id}`}>
-                    {busy === `peer-${request.id}` ? <Loader2 className="spin" size={14} /> : <Link2 size={14} />} Attach peer
-                  </button>
-                </form>
-              ) : null}
+              {needsExecutor ? <span className="queue-note">LiquidLane executor is waiting for Fiber RPC before channel handoff.</span> : null}
+              {!hasPeer ? <span className="error-text">Merchant Fiber pubkey is required before LiquidLane can execute this request.</span> : null}
             </div>
           </div>
           <div className="queue-actions">
             <span className="status-tag" data-status={request.status}>{statusLabel(request.status)}</span>
-            {request.status === "requested" && canOpen ? (
-              <button type="button" className="ghost-button small" onClick={() => onOpenFiberChannel(request.id)} disabled={openDisabled} title={openTitle}>
-                {busy === request.id ? <Loader2 className="spin" size={14} /> : <ArrowUpRight size={14} />} {openLabel}
-              </button>
-            ) : request.channel_id ? <code>{shortHash(request.channel_id)}</code> : request.fiber_temporary_channel_id ? <code>{shortHash(request.fiber_temporary_channel_id)}</code> : null}
+            {request.channel_id ? <code>{shortHash(request.channel_id)}</code> : request.fiber_temporary_channel_id ? <code>{shortHash(request.fiber_temporary_channel_id)}</code> : busy === request.id ? <Loader2 className="spin" size={14} /> : null}
           </div>
         </article>
         );
@@ -909,37 +799,6 @@ function RequestQueue({ requests, busy, canOpen, fiberRpcConfigured = true, onOp
   );
 }
 
-function FiberOperationList({ requests }: { requests: LiquidityRequest[] }) {
-  if (!requests.length) {
-    return <EmptyState title="No active channel operation" text="Channel open operations appear here after capacity is reserved." />;
-  }
-
-  return (
-    <div className="fiber-operation-list">
-      {requests.map((request) => {
-        const channelRef = request.channel_id ?? request.fiber_temporary_channel_id;
-        return (
-          <article key={request.id} className="fiber-operation-card" data-status={request.status}>
-            <div>
-              <span className="queue-status"><RadioTower size={15} /></span>
-              <div>
-                <strong>{request.status === "channel_open" ? "Channel open" : request.status === "pending_fiber_channel" ? "Opening" : "Open failed"}</strong>
-                <span>{assetAmount(request.amount, request.asset)} for {request.merchant_name}</span>
-                {request.fiber_peer_pubkey ? <code>Peer: {shortPubkey(request.fiber_peer_pubkey)}</code> : null}
-                {request.fiber_peer_address ? <code>Address: {shortFiberAddress(request.fiber_peer_address)}</code> : null}
-                {channelRef ? <code>Fiber ref: {shortHash(channelRef)}</code> : null}
-                {request.request_tx_hash ? <TxMiniLink txHash={request.request_tx_hash} label="Request tx" /> : null}
-                {request.fiber_note ? <span>{request.fiber_note}</span> : null}
-                {request.fiber_error ? <span className="error-text">{request.fiber_error}</span> : null}
-              </div>
-            </div>
-            <span className="status-tag" data-status={request.status}>{statusLabel(request.status)}</span>
-          </article>
-        );
-      })}
-    </div>
-  );
-}
 
 function AccountingPanels({ dashboard, claimableFees, busy, onWithdrawPosition, onClaimFees }: {
   dashboard: Dashboard;
@@ -1122,6 +981,20 @@ function ActionTransactionPanel({ state }: { state: ActionTxState | null }) {
           <strong>{assetAmount(state.amount, state.asset)}</strong>
         </div>
       ) : null}
+      {state.details?.length ? (
+        <div className="action-detail-list">
+          {state.details.map((detail) => (
+            <div key={`${detail.label}-${detail.value}`}>
+              <span>{detail.label}</span>
+              <code title={detail.value}>{detail.value}</code>
+              <button type="button" aria-label={`Copy ${detail.label}`} title={`Copy ${detail.label}`} onClick={() => copyText(detail.value)}><Copy size={13} /></button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {state.action === "fiber" && state.status === "ready" ? (
+        <p className="handoff-hint">Fiber accepted the handoff. Vault liquidity stays reserved until the channel is confirmed or retried.</p>
+      ) : null}
       {state.error ? <p className="supply-error">{state.error}</p> : null}
       {state.txHash ? (
         <TransactionReceipt txHash={state.txHash} explorerUrl={state.explorerUrl} label={actionLabel} success={state.status === "success"} />
@@ -1247,10 +1120,10 @@ function formatActivityTime(value: string) {
   return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(date);
 }
 
-function serviceLabel(role: Role) {
+function serviceLabel(role: ConsoleView) {
   if (role === "lp") return "Liquidity Provision";
   if (role === "merchant") return "Merchant Terminal";
-  return "Node Console";
+  return "Portfolio";
 }
 
 function statusLabel(status: string) {

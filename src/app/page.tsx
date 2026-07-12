@@ -2,30 +2,24 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
-  AlertTriangle,
   ArrowRight,
-  Banknote,
   CheckCircle2,
   CircleDollarSign,
   Copy,
   Droplet,
   Landmark,
-  ExternalLink,
   Loader2,
   LogOut,
   RadioTower,
-  ReceiptText,
-  Route,
   Store,
   ShieldCheck,
   Sparkles,
   UserRound,
 } from "lucide-react";
 import { ConsoleApp, type ConsoleView } from "./console";
-import { deployCkbScripts, type DeploymentProgressDetail, type DeploymentResult } from "@/lib/ckbDeployment";
 import { reserveVaultCapacity, type RequestProgressStep } from "@/lib/ckbRequest";
 import { claimVaultFees, withdrawVaultLiquidity, type SettlementProgressStep } from "@/lib/ckbSettlement";
-import { probeJoyIdSdkTransfer, probeJoyIdUnlock, supplyVaultLiquidity, type SupplyProgressStep } from "@/lib/ckbSupply";
+import { supplyVaultLiquidity, type SupplyProgressStep } from "@/lib/ckbSupply";
 import {
   connectCkbWallet,
   openJoyIdPopup,
@@ -259,10 +253,16 @@ export type HealthStatus = {
   ckb_network: string;
   vault_configured: boolean;
   beta_ready: boolean;
+  executor_enabled: boolean;
+  executor_funding_mode: string;
+  executor_queued_requests: number;
+  executor_pending_handoffs: number;
 };
 
+type PublicRole = Exclude<Role, "operator">;
+
 type Service = {
-  role: Role;
+  role: PublicRole;
   title: string;
   kicker: string;
   description: string;
@@ -300,6 +300,7 @@ export type ActionTxState = {
   asset?: string;
   txHash?: string;
   explorerUrl?: string;
+  details?: { label: string; value: string }[];
   error?: string;
   updatedAt: string;
 };
@@ -310,7 +311,6 @@ type ActionTxUpdate = Omit<ActionTxState, "updatedAt">;
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:18080";
 const DEFAULT_ASSET = "CKB";
 const EXPLORER_BASE = process.env.NEXT_PUBLIC_CKB_EXPLORER_URL ?? "https://pudge.explorer.nervos.org";
-const DEPLOYMENT_POPUP_POOL_SIZE = 5;
 const TOKEN_KEY = "liquidlane_token";
 const ADDRESS_KEY = "liquidlane_ckb_address";
 const WALLET_KEY = "liquidlane_joyid_wallet";
@@ -321,8 +321,15 @@ type ConsoleSurface = "landing" | "console";
 type NavigationState = { surface: ConsoleSurface; view: ConsoleView };
 
 function normalizeConsoleView(value: string | null | undefined): ConsoleView | null {
-  if (value === "lp" || value === "merchant" || value === "operator" || value === "vault") return value;
+  if (value === "lp" || value === "merchant" || value === "vault") return value;
+  if (value === "operator") return "vault";
   return null;
+}
+
+function defaultViewForRole(role: Role): ConsoleView {
+  if (role === "merchant") return "merchant";
+  if (role === "operator") return "vault";
+  return "lp";
 }
 
 function normalizeSurface(value: string | null | undefined): ConsoleSurface | null {
@@ -392,13 +399,6 @@ const services: Service[] = [
     description: "Reserve liquidity, attach a Fiber peer pubkey, and queue a channel open when your node is ready.",
     icon: Store,
   },
-  {
-    role: "operator",
-    title: "Operate lanes",
-    kicker: "For node operators",
-    description: "Manage vault accounting, capacity requests, and the Fiber channel-open lifecycle from one console.",
-    icon: RadioTower,
-  },
 ];
 
 export default function Home() {
@@ -406,11 +406,9 @@ export default function Home() {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [activeVault, setActiveVault] = useState<VaultConfig | null>(null);
   const [quote, setQuote] = useState<LiquidityQuote | null>(null);
-  const [deployment, setDeployment] = useState<DeploymentResult | null>(null);
-  const [deploymentNotice, setDeploymentNotice] = useState<string | null>(null);
   const [wallet, setWallet] = useState<ConnectedCkbWallet | null>(null);
   const [ckbAddress, setCkbAddress] = useState<string | null>(null);
-  const [selectedRole, setSelectedRole] = useState<Role | null>(null);
+  const [selectedRole, setSelectedRole] = useState<PublicRole | null>(null);
   const [activeView, setActiveView] = useState<ConsoleView>(() => readNavigationState().view);
   const [surface, setSurface] = useState<ConsoleSurface>(() => readNavigationState().surface);
   const [fiberRpcConfigured, setFiberRpcConfigured] = useState(false);
@@ -492,8 +490,8 @@ export default function Home() {
         setDashboard(data);
         setActiveVault(data.vault);
         setToken(activeToken);
-        setSelectedRole(data.user.role);
-        setActiveView((current) => normalizeConsoleView(current) ?? data.user.role);
+        setSelectedRole(data.user.role === "merchant" || data.user.role === "lp" ? data.user.role : null);
+        setActiveView((current) => normalizeConsoleView(current) ?? defaultViewForRole(data.user.role));
         setCkbAddress(data.user.ckb_address);
         window.localStorage.setItem(TOKEN_KEY, activeToken);
         window.localStorage.setItem(ADDRESS_KEY, data.user.ckb_address);
@@ -522,7 +520,7 @@ export default function Home() {
     if (restoredWallet) {
       setWallet(restoredWallet);
       setCkbAddress(restoredWallet.ckbAddress);
-      setStatus("JoyID wallet restored. LiquidLane is syncing your workspace.");
+      setStatus("JoyID wallet restored. LiquidLane is syncing your portfolio.");
     } else if (savedAddress) {
       setCkbAddress(savedAddress);
       if (!savedToken) setStatus("Wallet address restored. Reconnect JoyID when a service needs a signature.");
@@ -580,11 +578,11 @@ export default function Home() {
     }
   }
 
-  async function enterService(role: Role) {
+  async function enterService(role: PublicRole) {
     setSelectedRole(role);
     openConsoleView(role);
     if (dashboard?.user.role === role) {
-      document.getElementById("workspace")?.scrollIntoView({ behavior: "smooth" });
+      openConsoleView(role);
       return;
     }
 
@@ -640,8 +638,6 @@ export default function Home() {
     setCkbAddress(null);
     setDashboard(null);
     setQuote(null);
-    setDeployment(null);
-    setDeploymentNotice(null);
     setSupplyTx(null);
     setActionTx(null);
     setCopiedWalletAddress(false);
@@ -738,96 +734,6 @@ export default function Home() {
     });
   }
 
-
-  async function runJoyIdProbe() {
-    if (!wallet) {
-      setStatus("Reconnect JoyID before running the unlock probe.");
-      patchSupplyTx({
-        probeStatus: "failed",
-        probeMessage: "Reconnect JoyID before running the unlock probe.",
-      });
-      return;
-    }
-
-    setBusy("joyid-probe");
-    patchSupplyTx({
-      probeStatus: "running",
-      probeMessage: "Waiting for JoyID to sign a dry-run-only self-change transaction.",
-      probeDiagnostics: undefined,
-    });
-    let popup: JoyIdPopup | undefined;
-    try {
-      popup = openJoyIdPopup();
-      if (!popup) throw new Error("Browser blocked the JoyID popup. Enable popups for localhost and try again.");
-      const result = await probeJoyIdUnlock(wallet, popup);
-      patchSupplyTx({
-        probeStatus: "success",
-        probeMessage: `JoyID unlock probe passed on ${shortId(result.fundingOutPoint)}. The remaining issue is specific to the LiquidLane vault transaction shape.`,
-        probeDiagnostics: result.diagnostics,
-      });
-      setStatus("JoyID unlock probe passed. The funding cell can be unlocked in a minimal dry-run transaction.");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "JoyID unlock probe failed.";
-      patchSupplyTx({
-        probeStatus: "failed",
-        probeMessage: message,
-        probeDiagnostics: errorDiagnostics(error),
-      });
-      setStatus(message);
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function runJoyIdSdkProbe() {
-    if (!wallet) {
-      setStatus("Reconnect JoyID before running the SDK transfer probe.");
-      patchSupplyTx({
-        probeStatus: "failed",
-        probeMessage: "Reconnect JoyID before running the SDK transfer probe.",
-      });
-      return;
-    }
-
-    const recipientAddress = activeVault?.address ?? dashboard?.vault.address;
-    if (!recipientAddress?.trim()) {
-      setStatus("Active vault address is required for the SDK transfer probe.");
-      patchSupplyTx({
-        probeStatus: "failed",
-        probeMessage: "Active vault address is required for the SDK transfer probe.",
-      });
-      return;
-    }
-
-    setBusy("joyid-sdk-probe");
-    patchSupplyTx({
-      probeStatus: "running",
-      probeMessage: "Waiting for JoyID to build and sign a dry-run-only transfer to the active vault address.",
-      probeDiagnostics: undefined,
-    });
-    let popup: JoyIdPopup | undefined;
-    try {
-      popup = openJoyIdPopup();
-      if (!popup) throw new Error("Browser blocked the JoyID popup. Enable popups for localhost and try again.");
-      const result = await probeJoyIdSdkTransfer(wallet, recipientAddress, popup);
-      patchSupplyTx({
-        probeStatus: "success",
-        probeMessage: "JoyID SDK transfer probe passed. LiquidLane raw transaction signing is the remaining area to repair.",
-        probeDiagnostics: result.diagnostics,
-      });
-      setStatus("JoyID SDK transfer probe passed. The next repair should mirror JoyID's signed transaction shape.");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "JoyID SDK transfer probe failed.";
-      patchSupplyTx({
-        probeStatus: "failed",
-        probeMessage: message,
-        probeDiagnostics: errorDiagnostics(error),
-      });
-      setStatus(message);
-    } finally {
-      setBusy(null);
-    }
-  }
 
   async function handleDeposit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1176,7 +1082,7 @@ export default function Home() {
         explorerUrl,
       });
       showJoyIdPopupStatus(signPopup, "Recording request", "Core is verifying the request cell transaction.");
-      await request<LiquidityRequest>("/liquidity/requests", {
+      const created = await request<LiquidityRequest>("/liquidity/requests", {
         method: "POST",
         body: JSON.stringify({
           ...payload,
@@ -1187,17 +1093,22 @@ export default function Home() {
         }),
       });
       formElement.reset();
+      const fiberRef = created.channel_id ?? created.fiber_temporary_channel_id;
       writeActionTx({
         status: "success",
         action: "request",
-        title: "Capacity request submitted",
-        message: `${assetAmount(amount, asset)} was reserved and the request cell is now tracked by Core.`,
+        title: "Capacity reserved",
+        message: requestSuccessMessage(created, amount, asset),
         amount,
         asset,
         txHash: signed.txHash,
         explorerUrl,
+        details: [
+          { label: "Request status", value: statusLabel(created.status) },
+          ...(fiberRef ? [{ label: created.channel_id ? "Channel ID" : "Fiber handoff ref", value: fiberRef }] : []),
+        ],
       });
-      setStatus(`Capacity request broadcast ${shortHash(signed.txHash)} and reserved on LiquidLane.`);
+      setStatus(requestSuccessMessage(created, amount, asset));
       await refresh();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Capacity request failed.";
@@ -1434,155 +1345,6 @@ export default function Home() {
 
 
 
-  async function attachFiberPeer(id: string, event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const requestItem = dashboard?.liquidity_requests.find((item) => item.id === id);
-    setBusy(`peer-${id}`);
-    try {
-      const updated = await request<LiquidityRequest>(`/liquidity/requests/${id}/peer`, {
-        method: "POST",
-        body: JSON.stringify({
-          fiber_peer_pubkey: String(form.get("fiber_peer_pubkey") ?? ""),
-          fiber_peer_address: String(form.get("fiber_peer_address") ?? ""),
-        }),
-      });
-      writeActionTx({
-        status: "success",
-        action: "fiber",
-        title: "Fiber peer attached",
-        message: "This recovered request is now ready for operator channel open.",
-        amount: updated.amount,
-        asset: updated.asset,
-        txHash: updated.request_tx_hash ?? requestItem?.request_tx_hash ?? undefined,
-      });
-      setStatus("Fiber peer details attached. You can open the channel from the Node Console.");
-      await refresh();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Could not attach Fiber peer details.";
-      writeActionTx({
-        status: "failed",
-        action: "fiber",
-        title: "Peer attach failed",
-        message: "The request is still reserved, but the peer details were not saved.",
-        amount: requestItem?.amount,
-        asset: requestItem?.asset ?? DEFAULT_ASSET,
-        error: message,
-      });
-      setStatus(message);
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function openFiberChannel(id: string) {
-    const requestItem = dashboard?.liquidity_requests.find((item) => item.id === id);
-    if (!fiberRpcConfigured) {
-      const message = "FIBER_RPC_URL is required before submitting Fiber open_channel.";
-      writeActionTx({
-        status: "failed",
-        action: "fiber",
-        title: "Fiber RPC not configured",
-        message: "Core is tracking the reserved request, but it needs a Fiber node RPC endpoint before opening the channel.",
-        amount: requestItem?.amount,
-        asset: requestItem?.asset ?? DEFAULT_ASSET,
-        error: message,
-      });
-      setStatus(message);
-      return;
-    }
-
-    setBusy(id);
-    writeActionTx({
-      status: "running",
-      action: "fiber",
-      title: "Opening Fiber channel",
-      message: "Core is submitting the reserved request to the configured Fiber RPC endpoint.",
-      amount: requestItem?.amount,
-      asset: requestItem?.asset ?? DEFAULT_ASSET,
-    });
-    try {
-      const updated = await request<LiquidityRequest>(`/liquidity/requests/${id}/deploy`, { method: "POST" });
-      const message = statusMessage(updated);
-      writeActionTx({
-        status: "success",
-        action: "fiber",
-        title: updated.status === "channel_open" ? "Fiber channel opened" : "Fiber handoff recorded",
-        message,
-        amount: updated.amount,
-        asset: updated.asset,
-      });
-      setStatus(message);
-      await refresh();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Fiber channel open failed.";
-      writeActionTx({
-        status: "failed",
-        action: "fiber",
-        title: "Fiber channel open failed",
-        message: "Core did not open the channel. Check Fiber RPC configuration and the peer pubkey.",
-        amount: requestItem?.amount,
-        asset: requestItem?.asset ?? DEFAULT_ASSET,
-        error: message,
-      });
-      setStatus(message);
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function deployScriptsToTestnet() {
-    setBusy("deploy-scripts");
-    setDeploymentNotice("Opening JoyID and preparing deployment.");
-    const popupPool = openJoyIdPopupPool(DEPLOYMENT_POPUP_POOL_SIZE);
-    const popup = firstOpenPopup(popupPool);
-    if (!popup) {
-      closeJoyIdPopupPool(popupPool);
-      setBusy(null);
-      setDeploymentNotice("Browser blocked the JoyID popup. Enable popups for localhost and try again.");
-      setStatus("Browser blocked the JoyID popup. Enable popups for localhost and try again.");
-      return;
-    }
-    try {
-      let activeWallet = wallet;
-      if (!activeWallet) {
-        setStatus("Opening JoyID to reconnect your signer.");
-        activeWallet = await connectCkbWallet(popup);
-        if (dashboard?.user.ckb_address && activeWallet.ckbAddress !== dashboard.user.ckb_address) {
-          throw new Error("Connected wallet does not match this LiquidLane session.");
-        }
-        setWallet(activeWallet);
-        setCkbAddress(activeWallet.ckbAddress);
-        persistWalletSession(activeWallet);
-        setDeploymentNotice("JoyID reconnected. Click Deploy to testnet again to sign the deployment transaction.");
-        setStatus("JoyID reconnected. Click Deploy to testnet again to sign the deployment transaction.");
-        return;
-      }
-
-      setStatus("Preparing CKB script deployment package.");
-      const result = await deployCkbScripts(API_BASE, activeWallet, {
-        popup,
-        popups: popupPool,
-        onProgress(step, detail) {
-          const message = deploymentStepMessage(step, detail);
-          setDeploymentNotice(message);
-          setStatus(message);
-        },
-      });
-      setDeployment(result);
-      const transactionLabel = result.transactions.length === 1 ? shortHash(result.txHash) : `${result.transactions.length} deployment transactions`;
-      setDeploymentNotice(`Deployment broadcast ${transactionLabel}. Track it on CKB testnet explorer.`);
-      setStatus(`Deployment broadcast ${transactionLabel}. Track it on CKB testnet explorer.`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "CKB script deployment failed.";
-      setDeploymentNotice(message);
-      setStatus(message);
-    } finally {
-      closeJoyIdPopupPool(popupPool);
-      setBusy(null);
-    }
-  }
-
   const vault = dashboard?.vault ?? activeVault;
   const vaultSummary = dashboard?.vault;
   const hasActiveWallet = Boolean(wallet);
@@ -1594,11 +1356,9 @@ export default function Home() {
   const heroActionLabel = canBrowseServices ? "Choose service" : needsWalletReconnect ? "Reconnect wallet" : "Connect wallet";
   const utilization = useMemo(() => {
     if (!vaultSummary || vaultSummary.total_deposits === 0) return 0;
-    const used = vaultSummary.reserved_liquidity + vaultSummary.pending_channel_liquidity + vaultSummary.deployed_liquidity;
+    const used = vaultSummary.reserved_liquidity + vaultSummary.deployed_liquidity;
     return Math.round((used / vaultSummary.total_deposits) * 100);
   }, [vaultSummary]);
-  const showSupply = dashboard?.user.role === "lp" || dashboard?.user.role === "operator";
-  const showRequest = dashboard?.user.role === "merchant" || dashboard?.user.role === "operator";
   const vaultReady = Boolean(vault?.configured && vault.address);
   const claimableFees = dashboard?.positions.reduce((total, position) => total + Math.max(position.fees_earned - position.fees_claimed, 0), 0) ?? 0;
 
@@ -1636,8 +1396,6 @@ export default function Home() {
         onRefresh={() => refresh()}
         onDeposit={handleDeposit}
         onRequest={handleRequest}
-        onOpenFiberChannel={openFiberChannel}
-        onAttachFiberPeer={attachFiberPeer}
         onWithdrawPosition={withdrawPosition}
         onClaimFees={claimFees}
       />
@@ -1707,7 +1465,7 @@ export default function Home() {
       <section className="service-section" id="services">
         <div className="section-heading">
           <h2>{canBrowseServices ? "Choose your LiquidLane workflow." : needsWalletReconnect ? "Reconnect JoyID to continue with this wallet." : "Connect a CKB wallet to start."}</h2>
-          <p className="muted">Select a workflow to supply liquidity, reserve receive capacity, or operate Fiber channel opens.</p>
+          <p className="muted">Select a workflow to supply liquidity, reserve receive capacity, or review your portfolio.</p>
         </div>
         {needsWalletReconnect ? (
           <div className="wallet-reconnect-note">
@@ -1719,7 +1477,7 @@ export default function Home() {
           {services.map((service) => {
             const Icon = service.icon;
             const active = selectedRole === service.role;
-            const actionLabel = dashboard?.user.role === service.role ? "Current service" : hasReadySession ? "Open service" : hasSavedAddress ? "Reconnect + open" : "Connect + open";
+            const actionLabel = dashboard?.user.role === service.role ? "Current workflow" : hasReadySession ? "Open workflow" : hasSavedAddress ? "Reconnect + open" : "Connect + open";
             return (
               <article className={active ? "service-card active" : "service-card"} key={service.role}>
                 <span className="icon"><Icon size={21} /></span>
@@ -1736,241 +1494,13 @@ export default function Home() {
       </section>
 
       {dashboard ? (
-        <section className="workspace" id="workspace">
-          <div className="workspace-head">
-            <div>
-              <p className="eyebrow">{dashboard.user.role} workspace</p>
-              <h2>Live vault and Fiber capacity controls.</h2>
-            </div>
-            <button type="button" className="secondary-button" onClick={() => refresh()}>{loading ? <Loader2 className="spin" size={16} /> : <RadioTower size={16} />} Sync</button>
-          </div>
-
-          <div className="operation-panel" aria-label="LiquidLane vault overview">
-            <div className="panel-header">
-              <span>{vault?.asset ?? DEFAULT_ASSET} Vault</span>
-              <strong>{utilization}% used</strong>
-            </div>
-            <div className="meter" aria-hidden="true"><span style={{ width: `${Math.max(utilization, 2)}%` }} /></div>
-            <div className="metric-grid">
-              <Metric label="Total supplied" value={assetAmount(vaultSummary?.total_deposits ?? 0, vault?.asset ?? DEFAULT_ASSET)} />
-              <Metric label="Available for requests" value={assetAmount(vaultSummary?.available_liquidity ?? 0, vault?.asset ?? DEFAULT_ASSET)} />
-              <Metric label="Reserved" value={assetAmount(vaultSummary?.reserved_liquidity ?? 0, vault?.asset ?? DEFAULT_ASSET)} />
-              <Metric label="Pending Fiber" value={assetAmount(vaultSummary?.pending_channel_liquidity ?? 0, vault?.asset ?? DEFAULT_ASSET)} />
-              <Metric label="Channel open" value={assetAmount(vaultSummary?.deployed_liquidity ?? 0, vault?.asset ?? DEFAULT_ASSET)} />
-              <Metric label="Fees earned" value={assetAmount(vaultSummary?.fees_earned ?? 0, vault?.asset ?? DEFAULT_ASSET)} />
-              <Metric label="LPs" value={String(vaultSummary?.lp_count ?? 0)} />
-            </div>
-          </div>
-
-          <section className="product-grid focused-grid" id="vault">
-            {showSupply ? (
-              <article className="supply-card">
-                <span className="icon"><CircleDollarSign size={20} /></span>
-                <h2>Supply liquidity</h2>
-                <form className="stack-form" onSubmit={handleDeposit}>
-                  <label>Asset<input name="asset" value={vault?.asset ?? DEFAULT_ASSET} readOnly required /></label>
-                  <label>Amount<input name="amount" type="number" min="1" step="1" placeholder="100" required /></label>
-                  <button type="submit" disabled={busy === "deposit" || !vaultReady}>{busy === "deposit" ? <Loader2 className="spin" size={16} /> : <Banknote size={16} />} {busy === "deposit" ? "Processing supply" : "Confirm supply"}</button>
-                </form>
-                {vaultReady && vault?.address ? <p className="muted compact-note">Active vault <code>{shortAddress(vault.address)}</code></p> : null}
-                {!vaultReady ? <p className="muted compact-note">Vault setup is pending on Core.</p> : null}
-                <SupplyTransactionPanel state={supplyTx} onProbeJoyIdUnlock={runJoyIdProbe} onProbeJoyIdSdkTransfer={runJoyIdSdkProbe} probeBusy={busy === "joyid-probe" || busy === "joyid-sdk-probe"} />
-              </article>
-            ) : null}
-
-            {showRequest ? (
-              <article>
-                <span className="icon"><Route size={20} /></span>
-                <h2>Request capacity</h2>
-                <form className="stack-form" onSubmit={handleRequest}>
-                  <label>Asset<input name="asset" value={vault?.asset ?? DEFAULT_ASSET} readOnly required /></label>
-                  <div className="form-row">
-                    <label>Amount<input name="amount" type="number" min="1" placeholder="10000" required /></label>
-                    <label>Days<input name="duration_days" type="number" min="1" defaultValue="30" required /></label>
-                  </div>
-                  <label>
-                    Receiving Fiber pubkey
-                    <small className="field-help">Required. Use the receiving node compressed pubkey, starting with 02 or 03.</small>
-                    <input name="fiber_peer_pubkey" placeholder="02b6...be71" required />
-                  </label>
-                  <label>
-                    Fiber node multiaddr
-                    <small className="field-help">Optional. Not a CKB wallet address. Use /ip4/.../tcp/8228/p2p/&lt;peer_id&gt; only when the node is reachable.</small>
-                    <input name="fiber_peer_address" placeholder="/ip4/203.0.113.10/tcp/8228/p2p/12D3..." />
-                  </label>
-                  <button type="submit" disabled={busy === "request"}>{busy === "request" ? <Loader2 className="spin" size={16} /> : <ArrowRight size={16} />} Quote + reserve</button>
-                </form>
-              </article>
-            ) : null}
-
-            {showRequest && quote ? (
-              <article>
-                <span className="icon"><ShieldCheck size={20} /></span>
-                <h2>Quote result</h2>
-                <div className="quote-box">
-                  <Metric label="Capacity" value={assetAmount(quote.amount, quote.asset)} />
-                  <Metric label="Lease fee" value={assetAmount(quote.lease_fee, quote.asset)} />
-                  <Metric label="Routing fee" value={`${quote.routing_fee_bps} bps`} />
-                  <div className="status-tag" data-status={quote.available ? "available" : "failed"}>{quote.available ? "available" : "insufficient"}</div>
-                </div>
-              </article>
-            ) : null}
-          </section>
-
-          <section className="accounting-grid" aria-label="Vault accounting">
-            <div className="table-panel">
-              <div className="section-title">
-                <div>
-                  <p className="eyebrow">Vault positions</p>
-                  <h2>LP receipts</h2>
-                </div>
-                <span>{dashboard.positions.length} active</span>
-              </div>
-              <div className="position-list">
-                {dashboard.positions.length ? dashboard.positions.map((position) => (
-                  <div className="position-card" key={position.id}>
-                    <div className="position-main">
-                      <span className="icon"><ReceiptText size={18} /></span>
-                      <div>
-                        <strong>{position.lp_name}</strong>
-                        <span>{assetAmount(position.supplied_amount, position.asset)} supplied</span>
-                        <code>{shortId(position.receipt_cell_id)}</code>
-                      </div>
-                    </div>
-                    <div className="position-metrics">
-                      <Metric label="Available" value={assetAmount(position.available_amount, position.asset)} />
-                      <Metric label="Reserved" value={assetAmount(position.reserved_amount, position.asset)} />
-                      <Metric label="Deployed" value={assetAmount(position.deployed_amount, position.asset)} />
-                      <Metric label="Claimable fees" value={assetAmount(Math.max(position.fees_earned - position.fees_claimed, 0), position.asset)} />
-                    </div>
-                    <div className="position-footer">
-                      <span className="status-tag" data-status={position.status}>{statusLabel(position.status)}</span>
-                      <TxMiniLink txHash={position.supply_tx_hash} label="Supply tx" />
-                      <button type="button" className="ghost-button small" onClick={() => withdrawPosition(position.id)} disabled={busy === `withdraw-${position.id}` || position.available_amount <= 0}>
-                        {busy === `withdraw-${position.id}` ? <Loader2 className="spin" size={14} /> : <ArrowRight size={14} />} Withdraw
-                      </button>
-                      <button type="button" className="ghost-button small" onClick={() => claimFees(position.id)} disabled={busy === `claim-${position.id}` || Math.max(position.fees_earned - position.fees_claimed, 0) <= 0}>
-                        {busy === `claim-${position.id}` ? <Loader2 className="spin" size={14} /> : <Banknote size={14} />} Claim
-                      </button>
-                    </div>
-                  </div>
-                )) : <EmptyState title="No LP positions" text="Supply liquidity to create a receipt-backed vault position." />}
-              </div>
-            </div>
-
-            <div className="table-panel">
-              <div className="section-title">
-                <div>
-                  <p className="eyebrow">Reservations</p>
-                  <h2>Capacity locked</h2>
-                </div>
-                <span>{dashboard.reservations.length} total</span>
-              </div>
-              <div className="state-list">
-                {dashboard.reservations.length ? dashboard.reservations.map((reservation) => (
-                  <div className="state-row" key={reservation.id}>
-                    <div>
-                      <strong>{reservation.merchant_name}</strong>
-                      <span>{assetAmount(reservation.amount, reservation.asset)} capacity · fee {assetAmount(reservation.lease_fee, reservation.asset)}</span>
-                      <code>{shortId(reservation.request_cell_id)}</code>
-                    </div>
-                    <span className="status-tag" data-status={reservation.status}>{statusLabel(reservation.status)}</span>
-                  </div>
-                )) : <EmptyState title="No reservations" text="Merchant capacity requests reserve live vault liquidity here." />}
-              </div>
-            </div>
-
-            <div className="table-panel">
-              <div className="section-title">
-                <div>
-                  <p className="eyebrow">Settlement</p>
-                  <h2>Claims and exits</h2>
-                </div>
-                <span>{assetAmount(claimableFees, vault?.asset ?? DEFAULT_ASSET)} claimable</span>
-              </div>
-              <div className="state-list">
-                {dashboard.withdrawals.length || dashboard.fee_claims.length ? (
-                  <>
-                    {dashboard.withdrawals.map((withdrawal) => (
-                      <div className="state-row" key={withdrawal.id}>
-                        <div>
-                          <strong>{withdrawal.lp_name}</strong>
-                          <span>Withdrawal · {assetAmount(withdrawal.amount, withdrawal.asset)}</span>
-                          <code>{shortId(withdrawal.receipt_cell_id)}</code>
-                          {withdrawal.tx_hash ? <TxMiniLink txHash={withdrawal.tx_hash} label="Withdraw tx" /> : null}
-                        </div>
-                        <span className="status-tag" data-status={withdrawal.status}>{statusLabel(withdrawal.status)}</span>
-                      </div>
-                    ))}
-                    {dashboard.fee_claims.map((claim) => (
-                      <div className="state-row" key={claim.id}>
-                        <div>
-                          <strong>Fee claim</strong>
-                          <span>{assetAmount(claim.amount, claim.asset)}</span>
-                          <code>{shortId(claim.position_id)}</code>
-                          {claim.tx_hash ? <TxMiniLink txHash={claim.tx_hash} label="Claim tx" /> : null}
-                        </div>
-                        <span className="status-tag" data-status={claim.status}>{statusLabel(claim.status)}</span>
-                      </div>
-                    ))}
-                  </>
-                ) : <EmptyState title="No settlement intents" text="Withdrawal and fee-claim intents appear after positions earn or exit liquidity." />}
-              </div>
-            </div>
-          </section>
-
-          <section className="split-section" id="lifecycle">
-            <div className="table-panel">
-              <div className="section-title">
-                <div>
-                  <p className="eyebrow">Fiber lifecycle</p>
-                  <h2>Capacity requests</h2>
-                </div>
-                <span>{dashboard.liquidity_requests.length} total</span>
-              </div>
-              <div className="request-list">
-                {dashboard.liquidity_requests.length ? dashboard.liquidity_requests.map((request) => (
-                  <div className="request-card" key={request.id}>
-                    <div>
-                      <strong>{request.merchant_name}</strong>
-                      <span>{assetAmount(request.amount, request.asset)} · {request.duration_days} days · fee {assetAmount(request.lease_fee, request.asset)}</span>
-                      {request.fiber_peer_pubkey ? <code>{shortPubkey(request.fiber_peer_pubkey)}</code> : <span>No Fiber peer pubkey attached</span>}
-                      {request.fiber_peer_address ? <code>{shortFiberAddress(request.fiber_peer_address)}</code> : null}
-                      <code>{shortId(request.request_cell_id)}</code>
-                      {request.request_tx_hash ? <TxMiniLink txHash={request.request_tx_hash} label="Request tx" /> : null}
-                      {request.fiber_note ? <span>{request.fiber_note}</span> : null}
-                      {request.fiber_error ? <span className="error-text">{request.fiber_error}</span> : null}
-                    </div>
-                    <div>
-                      <span className="status-tag" data-status={request.status}>{statusLabel(request.status)}</span>
-                      {request.status === "requested" && showRequest ? (
-                        <button type="button" onClick={() => openFiberChannel(request.id)} disabled={busy === request.id}>
-                          {busy === request.id ? <Loader2 className="spin" size={16} /> : <CheckCircle2 size={16} />} Open Fiber
-                        </button>
-                      ) : request.channel_id ? <code>{request.channel_id}</code> : request.fiber_temporary_channel_id ? <code>{request.fiber_temporary_channel_id}</code> : null}
-                    </div>
-                  </div>
-                )) : <EmptyState title="No capacity requests yet" text="Create a request after liquidity has been supplied into the vault." />}
-              </div>
-            </div>
-
-            <div className="table-panel">
-              <div className="section-title">
-                <div>
-                  <p className="eyebrow">Vault movement</p>
-                  <h2>Activity</h2>
-                </div>
-              </div>
-              <div className="activity-list">
-                {dashboard.activity.length ? dashboard.activity.map((event) => (
-                  <div key={event.id}>
-                    <span><Landmark size={16} /></span>
-                    <p>{event.label}<strong>{event.amount ? ` ${assetAmount(event.amount, event.asset ?? DEFAULT_ASSET)}` : ""}</strong></p>
-                  </div>
-                )) : <EmptyState title="No activity yet" text="Confirmed Core events will appear after vault or Fiber operations settle." />}
-              </div>
-            </div>
-          </section>
+        <section className="lifecycle-band connected-band" id="workspace">
+          <div><Landmark size={18} /> {assetAmount(vaultSummary?.available_liquidity ?? 0, vault?.asset ?? DEFAULT_ASSET)} available</div>
+          <div><ShieldCheck size={18} /> {assetAmount(claimableFees, vault?.asset ?? DEFAULT_ASSET)} claimable fees</div>
+          <div><RadioTower size={18} /> {dashboard.liquidity_requests.length} capacity requests</div>
+          <button type="button" className="secondary-button dark" onClick={() => openConsoleView(activeView)}>
+            Open dashboard <ArrowRight size={16} />
+          </button>
         </section>
       ) : (
         <section className="lifecycle-band" id="lifecycle">
@@ -1981,139 +1511,6 @@ export default function Home() {
       )}
     </main>
   );
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
-function EmptyState({ title, text }: { title: string; text: string }) {
-  return (
-    <div className="empty-state">
-      <strong>{title}</strong>
-      <span>{text}</span>
-    </div>
-  );
-}
-
-const supplySteps: { id: SupplyStepId; label: string }[] = [
-  { id: "vault", label: "Vault" },
-  { id: "intent", label: "Intent" },
-  { id: "funding", label: "Cells" },
-  { id: "signing", label: "Sign" },
-  { id: "verify", label: "Verify" },
-  { id: "broadcast", label: "Broadcast" },
-  { id: "settlement", label: "Receipt" },
-];
-
-function SupplyTransactionPanel({ state, onProbeJoyIdUnlock, onProbeJoyIdSdkTransfer, probeBusy = false }: { state: SupplyTxState | null; onProbeJoyIdUnlock?: () => void; onProbeJoyIdSdkTransfer?: () => void; probeBusy?: boolean }) {
-  if (!state) return null;
-  const activeIndex = supplySteps.findIndex((step) => step.id === state.step);
-
-  return (
-    <div className="supply-transaction" data-status={state.status} role="status" aria-live="polite">
-      <div className="supply-transaction-head">
-        <span className="tx-state-icon" aria-hidden="true">
-          {state.status === "success" || state.status === "ready" ? <CheckCircle2 size={18} /> : state.status === "failed" ? <AlertTriangle size={18} /> : <Loader2 className="spin" size={18} />}
-        </span>
-        <div>
-          <strong>{state.title}</strong>
-          <span>{state.message}</span>
-        </div>
-        <time>{state.updatedAt}</time>
-      </div>
-      <div className="supply-stepper" aria-label="Supply transaction progress">
-        {supplySteps.map((step, index) => {
-          const stateName = state.status === "failed" && index === activeIndex ? "failed" : index < activeIndex || state.status === "success" || (state.status === "ready" && index === activeIndex) ? "done" : index === activeIndex ? "active" : "waiting";
-          return <span key={step.id} data-state={stateName}>{step.label}</span>;
-        })}
-      </div>
-      {state.amount && state.asset ? (
-        <div className="supply-context">
-          <span>Amount</span>
-          <strong>{assetAmount(state.amount, state.asset)}</strong>
-        </div>
-      ) : null}
-      {state.error ? <p className="supply-error">{state.error}</p> : null}
-      {state.diagnostics?.length ? <DiagnosticList title="JoyID transaction diagnostics" items={state.diagnostics} /> : null}
-      {state.status === "failed" && (onProbeJoyIdUnlock || onProbeJoyIdSdkTransfer) ? (
-        <div className="probe-actions">
-          {onProbeJoyIdUnlock ? (
-            <button type="button" className="ghost-button small" onClick={onProbeJoyIdUnlock} disabled={probeBusy}>
-              {probeBusy ? <Loader2 className="spin" size={14} /> : <ShieldCheck size={14} />} Raw unlock probe
-            </button>
-          ) : null}
-          {onProbeJoyIdSdkTransfer ? (
-            <button type="button" className="ghost-button small" onClick={onProbeJoyIdSdkTransfer} disabled={probeBusy}>
-              {probeBusy ? <Loader2 className="spin" size={14} /> : <ShieldCheck size={14} />} SDK transfer probe
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-      {state.probeMessage ? (
-        <div className="probe-result" data-status={state.probeStatus ?? "ready"}>
-          <strong>{state.probeStatus === "success" ? "Probe passed" : state.probeStatus === "failed" ? "Probe failed" : "Probe running"}</strong>
-          <span>{state.probeMessage}</span>
-        </div>
-      ) : null}
-      {state.probeDiagnostics?.length ? <DiagnosticList title="Probe diagnostics" items={state.probeDiagnostics} /> : null}
-      {state.txHash ? (
-        <TransactionReceipt txHash={state.txHash} explorerUrl={state.explorerUrl} label="Vault supply" success={state.status === "success"} />
-      ) : (
-        <p className="muted compact-note">No transaction hash has been broadcast yet.</p>
-      )}
-    </div>
-  );
-}
-
-
-function DiagnosticList({ title, items }: { title: string; items: string[] }) {
-  return (
-    <div className="diagnostic-list">
-      <strong>{title}</strong>
-      {items.map((item) => <code key={item}>{item}</code>)}
-    </div>
-  );
-}
-
-function TransactionReceipt({ txHash, explorerUrl, label, success }: { txHash: string; explorerUrl?: string; label: string; success?: boolean }) {
-  const href = explorerUrl ?? transactionExplorerUrl(txHash);
-  return (
-    <div className="transaction-receipt-card" data-success={success ? "true" : "false"}>
-      <div className="receipt-status-row">
-        <span><CheckCircle2 size={18} /></span>
-        <div>
-          <strong>{success ? "Confirmed on CKB testnet" : "Transaction broadcast"}</strong>
-          <small>{label}</small>
-        </div>
-      </div>
-      <div className="receipt-hash-row">
-        <span>Tx hash</span>
-        <code title={txHash}>{txHash}</code>
-        <button type="button" aria-label="Copy transaction hash" title="Copy transaction hash" onClick={() => copyText(txHash)}><Copy size={14} /></button>
-      </div>
-      <a className="receipt-explorer-link" href={href} target="_blank" rel="noreferrer">
-        View on testnet explorer <ExternalLink size={14} />
-      </a>
-    </div>
-  );
-}
-
-function TxMiniLink({ txHash, label }: { txHash: string; label: string }) {
-  return (
-    <a className="tx-mini-link" href={transactionExplorerUrl(txHash)} target="_blank" rel="noreferrer" title={txHash}>
-      <ExternalLink size={12} /> {label} <code>{shortHash(txHash)}</code>
-    </a>
-  );
-}
-
-function copyText(value: string) {
-  void navigator.clipboard?.writeText(value);
 }
 
 function money(value: number) {
@@ -2138,25 +1535,6 @@ function shortHash(hash: string) {
 
 function transactionExplorerUrl(txHash: string) {
   return `${EXPLORER_BASE.replace(/\/$/, "")}/transaction/${txHash}`;
-}
-
-function shortId(id: string) {
-  if (id.length <= 22) return id;
-  return `${id.slice(0, 12)}...${id.slice(-8)}`;
-}
-
-function openJoyIdPopupPool(size: number): JoyIdPopup[] {
-  return Array.from({ length: size }, () => openJoyIdPopup());
-}
-
-function firstOpenPopup(popups: JoyIdPopup[]) {
-  return popups.find((popup) => popup && !popup.closed) ?? null;
-}
-
-function closeJoyIdPopupPool(popups: JoyIdPopup[]) {
-  for (const popup of popups) {
-    if (popup && !popup.closed) popup.close();
-  }
 }
 
 function shortAddress(address: string) {
@@ -2184,14 +1562,6 @@ function statusLabel(status: string) {
   return status.replaceAll("_", " ");
 }
 
-function deploymentStepMessage(step: "package" | "funding" | "signing" | "broadcast", detail?: DeploymentProgressDetail) {
-  const counter = detail && detail.total > 1 ? ` ${detail.current}/${detail.total}` : "";
-  if (step === "package") return "Loading compiled CKB script package from Core.";
-  if (step === "funding") return "Planning single-input JoyID deployment transactions.";
-  if (step === "signing") return `Confirm CKB script deployment${counter} in JoyID.`;
-  return `Broadcasting CKB script deployment${counter} to testnet.`;
-}
-
 function settlementStepLabel(step: SettlementProgressStep) {
   if (step === "vault") return "Checking vault";
   if (step === "receipt") return "Checking LP receipt";
@@ -2201,11 +1571,12 @@ function settlementStepLabel(step: SettlementProgressStep) {
   return "Broadcasting settlement";
 }
 
-function statusMessage(request: LiquidityRequest) {
-  if (request.status === "pending_fiber_channel") return "Fiber channel open is pending with LiquidLane Core.";
-  if (request.status === "channel_open") return "Fiber channel is open.";
-  if (request.status === "failed") return request.fiber_error ?? "Fiber channel open failed.";
-  return "Capacity request reserved.";
+function requestSuccessMessage(request: LiquidityRequest, amount: number, asset: string) {
+  const capacity = assetAmount(amount, asset);
+  if (request.status === "pending_fiber_channel") return `${capacity} is reserved. LiquidLane submitted the Fiber handoff and is waiting for channel confirmation.`;
+  if (request.status === "channel_open") return `${capacity} is reserved and the Fiber channel is confirmed.`;
+  if (request.status === "failed") return `${capacity} is reserved on-chain, but the Fiber handoff needs repair: ${request.fiber_error ?? "unknown Fiber error"}`;
+  return `${capacity} is reserved on-chain. LiquidLane executor will process the Fiber handoff.`;
 }
 
 function isFiberPubkey(pubkey: string | undefined) {
