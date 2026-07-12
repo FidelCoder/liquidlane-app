@@ -833,6 +833,7 @@ code {
 .status-tag[data-status="closed"],
 .status-tag[data-status="expired"],
 .status-tag[data-status="cancelled"] { background: rgba(242, 139, 130, 0.12); border-color: rgba(242, 139, 130, 0.24); color: var(--red); }
+.status-tag[data-status="released"] { background: rgba(247, 184, 73, 0.12); border-color: rgba(247, 184, 73, 0.26); color: var(--gold); }
 
 .request-queue.compact { max-height: 330px; overflow: auto; padding-right: 4px; }
 .queue-item {
@@ -1663,6 +1664,28 @@ code {
   border-color: rgba(247, 184, 73, 0.34);
   color: var(--gold);
 }
+.transaction-activity-shell { display: grid; gap: 14px; }
+.activity-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.activity-filter-bar button {
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  color: #c8d0df;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 900;
+  min-height: 34px;
+  padding: 0 13px;
+}
+.activity-filter-bar button[data-active="true"] {
+  background: rgba(247, 184, 73, 0.16);
+  border-color: rgba(247, 184, 73, 0.4);
+  color: var(--gold);
+}
 .transaction-activity-list { display: grid; gap: 12px; }
 .transaction-activity-row {
   align-items: center;
@@ -1676,9 +1699,10 @@ code {
   padding: 16px 18px;
 }
 .transaction-activity-row[data-kind="supply"] { border-left: 3px solid var(--teal); }
-.transaction-activity-row[data-kind="withdrawal"] { border-left: 3px solid var(--gold); }
-.transaction-activity-row[data-kind="claim"] { border-left: 3px solid var(--blue); }
-.transaction-activity-row[data-kind="request"] { border-left: 3px solid #d8a7ff; }
+.transaction-activity-row[data-kind="withdraw"] { border-left: 3px solid var(--gold); }
+.transaction-activity-row[data-kind="reserve"] { border-left: 3px solid #d8a7ff; }
+.transaction-activity-row[data-kind="channel"] { border-left: 3px solid var(--blue); }
+.transaction-activity-row[data-kind="fee"] { border-left: 3px solid #58e0aa; }
 .activity-kind-icon {
   align-items: center;
   background: rgba(255, 255, 255, 0.07);
@@ -1691,6 +1715,8 @@ code {
   width: 42px;
 }
 .transaction-activity-row[data-kind="supply"] .activity-kind-icon { color: var(--teal); }
+.transaction-activity-row[data-kind="channel"] .activity-kind-icon { color: var(--blue); }
+.transaction-activity-row[data-kind="fee"] .activity-kind-icon { color: #58e0aa; }
 .activity-main { display: grid; gap: 6px; min-width: 0; }
 .activity-main strong { color: #eef4ff; font-size: 1rem; }
 .activity-main span { color: #c8d0df; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

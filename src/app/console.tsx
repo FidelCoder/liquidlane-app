@@ -505,9 +505,12 @@ function VaultSuccessReceiptCard({ title, message, asset, amount, txHash, explor
   );
 }
 
+type TransactionActivityKind = "supply" | "withdraw" | "reserve" | "channel" | "fee";
+type TransactionActivityFilter = "all" | TransactionActivityKind;
+
 type TransactionActivityEntry = {
   id: string;
-  kind: "supply" | "withdrawal" | "claim" | "request";
+  kind: TransactionActivityKind;
   title: string;
   description: string;
   amount: number;
@@ -518,33 +521,62 @@ type TransactionActivityEntry = {
 };
 
 function TransactionActivity({ dashboard }: { dashboard: Dashboard }) {
+  const [filter, setFilter] = useState<TransactionActivityFilter>("all");
   const entries = useMemo(() => buildTransactionActivity(dashboard), [dashboard]);
+  const filteredEntries = filter === "all" ? entries : entries.filter((entry) => entry.kind === filter);
+  const filters: { id: TransactionActivityFilter; label: string }[] = [
+    { id: "all", label: "All" },
+    { id: "supply", label: "Supply" },
+    { id: "withdraw", label: "Withdraw" },
+    { id: "reserve", label: "Reserve" },
+    { id: "channel", label: "Channel" },
+    { id: "fee", label: "Fee" },
+  ];
 
   if (!entries.length) {
     return <EmptyState title="No transaction activity" text="Supplies, withdrawals, claims, and capacity requests will appear here after Core accepts them." />;
   }
 
   return (
-    <div className="transaction-activity-list">
-      {entries.map((entry) => (
-        <article className="transaction-activity-row" key={entry.id} data-kind={entry.kind}>
-          <span className="activity-kind-icon">
-            {entry.kind === "supply" ? <PlusCircle size={18} /> : entry.kind === "withdrawal" ? <ArrowDownToLine size={18} /> : entry.kind === "claim" ? <Banknote size={18} /> : <Route size={18} />}
-          </span>
-          <div className="activity-main">
-            <strong>{entry.title}</strong>
-            <span>{entry.description}</span>
-            {entry.txHash ? <TxMiniLink txHash={entry.txHash} label="Explorer" /> : null}
-          </div>
-          <div className="activity-meta">
-            <strong>{assetAmount(entry.amount, entry.asset)}</strong>
-            <span className="status-tag" data-status={entry.status}>{statusLabel(entry.status)}</span>
-            <time>{formatActivityTime(entry.createdAt)}</time>
-          </div>
-        </article>
-      ))}
+    <div className="transaction-activity-shell">
+      <div className="activity-filter-bar" role="tablist" aria-label="Transaction activity filters">
+        {filters.map((item) => (
+          <button type="button" key={item.id} role="tab" aria-selected={filter === item.id} data-active={filter === item.id} onClick={() => setFilter(item.id)}>
+            {item.label}
+          </button>
+        ))}
+      </div>
+      {!filteredEntries.length ? (
+        <EmptyState title={`No ${filter} activity`} text="Transactions matching this filter will appear here after Core accepts them." />
+      ) : (
+        <div className="transaction-activity-list">
+          {filteredEntries.map((entry) => (
+            <article className="transaction-activity-row" key={entry.id} data-kind={entry.kind}>
+              <span className="activity-kind-icon">{activityIcon(entry.kind)}</span>
+              <div className="activity-main">
+                <strong>{entry.title}</strong>
+                <span>{entry.description}</span>
+                {entry.txHash ? <TxMiniLink txHash={entry.txHash} label="Explorer" /> : null}
+              </div>
+              <div className="activity-meta">
+                <strong>{assetAmount(entry.amount, entry.asset)}</strong>
+                <span className="status-tag" data-status={entry.status}>{statusLabel(entry.status)}</span>
+                <time>{formatActivityTime(entry.createdAt)}</time>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
     </div>
   );
+}
+
+function activityIcon(kind: TransactionActivityKind) {
+  if (kind === "supply") return <PlusCircle size={18} />;
+  if (kind === "withdraw") return <ArrowDownToLine size={18} />;
+  if (kind === "fee") return <Banknote size={18} />;
+  if (kind === "channel") return <Route size={18} />;
+  return <ReceiptText size={18} />;
 }
 
 function buildTransactionActivity(dashboard: Dashboard): TransactionActivityEntry[] {
@@ -561,7 +593,7 @@ function buildTransactionActivity(dashboard: Dashboard): TransactionActivityEntr
   }));
   const withdrawals = dashboard.withdrawals.map((withdrawal) => ({
     id: `withdrawal-${withdrawal.id}`,
-    kind: "withdrawal" as const,
+    kind: "withdraw" as const,
     title: "Withdraw liquidity",
     description: withdrawal.lp_name,
     amount: withdrawal.amount,
@@ -572,7 +604,7 @@ function buildTransactionActivity(dashboard: Dashboard): TransactionActivityEntr
   }));
   const claims = dashboard.fee_claims.map((claim) => ({
     id: `claim-${claim.id}`,
-    kind: "claim" as const,
+    kind: "fee" as const,
     title: "Claim fees",
     description: claim.position_id,
     amount: claim.amount,
@@ -585,9 +617,9 @@ function buildTransactionActivity(dashboard: Dashboard): TransactionActivityEntr
     .filter((request) => request.request_tx_hash)
     .map((request) => ({
       id: `request-${request.id}`,
-      kind: "request" as const,
-      title: "Reserve capacity",
-      description: request.merchant_name,
+      kind: request.status === "pending_fiber_channel" || request.status === "channel_open" ? "channel" as const : "reserve" as const,
+      title: requestActivityTitle(request),
+      description: requestActivityDescription(request),
       amount: request.amount,
       asset: request.asset,
       status: request.status,
@@ -598,6 +630,22 @@ function buildTransactionActivity(dashboard: Dashboard): TransactionActivityEntr
   return [...deposits, ...withdrawals, ...claims, ...requests]
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, 10);
+}
+
+function requestActivityTitle(request: LiquidityRequest) {
+  if (request.status === "channel_open") return "Fiber channel active";
+  if (request.status === "pending_fiber_channel") return "Fiber handoff pending";
+  if (request.status === "released" || request.status === "expired") return "Capacity released";
+  if (request.status === "failed") return "Capacity request failed";
+  return "Reserve capacity";
+}
+
+function requestActivityDescription(request: LiquidityRequest) {
+  if (request.status === "pending_fiber_channel") return `${request.merchant_name} is waiting for channel confirmation`;
+  if (request.status === "channel_open") return `${request.merchant_name} can receive through the opened lane`;
+  if (request.status === "released" || request.status === "expired") return `${request.merchant_name} reservation returned to vault availability`;
+  if (request.status === "failed") return `${request.merchant_name} request needs repair before execution`;
+  return request.merchant_name;
 }
 
 function MerchantTerminalView({ dashboard, busy, quote, fiberRpcConfigured, onRequest }: {
@@ -783,6 +831,7 @@ function RequestQueue({ requests, busy, fiberRpcConfigured = true, compact = fal
               {request.fiber_note ? <span className="queue-note">{request.fiber_note}</span> : null}
               {request.status === "pending_fiber_channel" ? <span className="queue-note">Vault liquidity remains reserved while LiquidLane waits for Fiber channel confirmation.</span> : null}
               {request.status === "failed" && hasPeer ? <span className="queue-note">LiquidLane could not complete the Fiber handoff yet. The reserve remains visible for repair.</span> : null}
+              {request.status === "released" || request.status === "expired" ? <span className="queue-note">This reservation is no longer active; vault liquidity is available again.</span> : null}
               {request.fiber_error ? <span className="error-text">{request.fiber_error}</span> : null}
               {needsExecutor ? <span className="queue-note">LiquidLane executor is waiting for Fiber RPC before channel handoff.</span> : null}
               {!hasPeer ? <span className="error-text">Merchant Fiber pubkey is required before LiquidLane can execute this request.</span> : null}

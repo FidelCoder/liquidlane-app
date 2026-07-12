@@ -29,7 +29,7 @@ import {
 } from "@/lib/ckbWallet";
 
 export type Role = "lp" | "merchant" | "operator";
-export type LiquidityStatus = "requested" | "pending_fiber_channel" | "channel_open" | "failed";
+export type LiquidityStatus = "requested" | "pending_fiber_channel" | "channel_open" | "failed" | "expired" | "released";
 
 export type UserProfile = {
   id: string;
@@ -1576,6 +1576,7 @@ function requestSuccessMessage(request: LiquidityRequest, amount: number, asset:
   if (request.status === "pending_fiber_channel") return `${capacity} is reserved. LiquidLane submitted the Fiber handoff and is waiting for channel confirmation.`;
   if (request.status === "channel_open") return `${capacity} is reserved and the Fiber channel is confirmed.`;
   if (request.status === "failed") return `${capacity} is reserved on-chain, but the Fiber handoff needs repair: ${request.fiber_error ?? "unknown Fiber error"}`;
+  if (request.status === "expired" || request.status === "released") return `${capacity} reservation is no longer active; liquidity is back in the vault.`;
   return `${capacity} is reserved on-chain. LiquidLane executor will process the Fiber handoff.`;
 }
 
