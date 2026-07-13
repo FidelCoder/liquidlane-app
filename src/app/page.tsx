@@ -63,6 +63,7 @@ export type VaultConfig = {
   asset: string;
   address: string | null;
   cell_out_point?: string | null;
+  executor_address?: string | null;
   network: string;
   configured: boolean;
   script_version?: string;

@@ -52,6 +52,7 @@ type VaultConfig = {
   asset: string;
   address: string | null;
   cell_out_point?: string | null;
+  executor_address?: string | null;
   scripts?: VaultScripts;
 };
 
@@ -138,7 +139,10 @@ export async function reserveVaultCapacity(
   const leaseFee = ckbAmount(options.intent.lease_fee);
   const scripts = requiredScripts(options.vault.scripts);
   const userLock = toJoyScript(addressToScript(wallet.ckbAddress));
-  const operatorLock = toJoyScript(addressToScript(options.vault.address));
+  if (!options.vault.executor_address?.trim()) {
+    throw new Error("LiquidLane executor address is not configured for capacity requests.");
+  }
+  const operatorLock = toJoyScript(addressToScript(options.vault.executor_address));
 
   reportProgress(options, popup, "vault", "Loading the active vault cell for the capacity reservation.");
   const vaultCell = await loadVaultCell(options.vault, scripts);
@@ -151,7 +155,7 @@ export async function reserveVaultCapacity(
   }
 
   const requestType = buildRequestType(userLock, operatorLock, vaultCell.type, scripts, options.intent.id);
-  const requestCapacity = occupiedCapacity(userLock, requestType, REQUEST_DATA_LEN) + CELL_CAPACITY_PAD;
+  const requestCapacity = occupiedCapacity(operatorLock, requestType, REQUEST_DATA_LEN) + CELL_CAPACITY_PAD;
   const minChangeCapacity = occupiedCapacity(userLock, null, 0) + CELL_CAPACITY_PAD;
   const requiredFunding = requestCapacity + leaseFee.shannons + minChangeCapacity + FEE_MARGIN;
 
@@ -162,6 +166,7 @@ export async function reserveVaultCapacity(
     leaseFee,
     funding,
     userLock,
+    operatorLock,
     vaultCell,
     requestType,
     requestCapacity,
@@ -187,6 +192,7 @@ function buildRequestTransaction(input: {
   leaseFee: { units: bigint; shannons: bigint };
   funding: { inputs: RequestInput[]; total: bigint };
   userLock: JoyScript;
+  operatorLock: JoyScript;
   vaultCell: VaultCell;
   requestType: JoyScript;
   requestCapacity: bigint;
@@ -218,7 +224,7 @@ function buildRequestTransaction(input: {
       },
       {
         capacity: toHex(input.requestCapacity),
-        lock: input.userLock,
+        lock: input.operatorLock,
         type: input.requestType,
       },
       {
