@@ -695,7 +695,8 @@ code {
 .merchant-guidance div { display: grid; gap: 5px; }
 .merchant-guidance strong { color: #fff2cf; }
 .merchant-guidance span { color: #b9c4d8; line-height: 1.45; }
-.merchant-access-panel { grid-column: 1 / -1; }
+.merchant-access-panel,
+.merchant-history-panel { grid-column: 1 / -1; }
 .merchant-access-grid {
   display: grid;
   gap: 14px;
@@ -881,11 +882,14 @@ code {
   border-top: 1px solid var(--line);
   display: grid;
   gap: 12px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(138px, 1fr));
   margin-top: 18px;
   padding-top: 18px;
 }
 .quote-strip div { display: grid; gap: 4px; }
+.quote-summary { display: grid; gap: 14px; margin-top: 18px; }
+.quote-summary .quote-strip { margin-top: 0; }
+.receiver-reserve-note { margin-top: 0; }
 .topology-panel {
   align-items: center;
   border: 1px solid var(--line);
@@ -1668,6 +1672,8 @@ code {
   color: var(--gold);
 }
 .transaction-activity-shell { display: grid; gap: 14px; }
+.transaction-activity-shell.compact .transaction-activity-list { max-height: 520px; overflow: auto; padding-right: 2px; }
+.transaction-activity-shell.compact .transaction-activity-row { min-height: 84px; }
 .activity-filter-bar {
   display: flex;
   flex-wrap: wrap;
@@ -1706,6 +1712,7 @@ code {
 .transaction-activity-row[data-kind="reserve"] { border-left: 3px solid #d8a7ff; }
 .transaction-activity-row[data-kind="channel"] { border-left: 3px solid var(--blue); }
 .transaction-activity-row[data-kind="fee"] { border-left: 3px solid #58e0aa; }
+.transaction-activity-row[data-kind="event"] { border-left: 3px solid rgba(255, 255, 255, 0.28); }
 .activity-kind-icon {
   align-items: center;
   background: rgba(255, 255, 255, 0.07);
@@ -1719,7 +1726,9 @@ code {
 }
 .transaction-activity-row[data-kind="supply"] .activity-kind-icon { color: var(--teal); }
 .transaction-activity-row[data-kind="channel"] .activity-kind-icon { color: var(--blue); }
+.transaction-activity-row[data-kind="reserve"] .activity-kind-icon { color: #d8a7ff; }
 .transaction-activity-row[data-kind="fee"] .activity-kind-icon { color: #58e0aa; }
+.transaction-activity-row[data-kind="event"] .activity-kind-icon { color: #dce6ff; }
 .activity-main { display: grid; gap: 6px; min-width: 0; }
 .activity-main strong { color: #eef4ff; font-size: 1rem; }
 .activity-main span { color: #c8d0df; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1734,6 +1743,119 @@ code {
 }
 .activity-meta > strong { color: #fff4d7; font-size: 1rem; }
 .activity-meta time { color: var(--muted); font-size: 0.78rem; }
+.transaction-activity-row { cursor: pointer; outline: none; }
+.transaction-activity-row:hover,
+.transaction-activity-row:focus-visible {
+  background: rgba(18, 28, 45, 0.82);
+  border-color: rgba(247, 184, 73, 0.28);
+}
+.history-modal-backdrop {
+  align-items: center;
+  background: rgba(2, 7, 16, 0.76);
+  backdrop-filter: blur(10px);
+  display: grid;
+  inset: 0;
+  justify-items: center;
+  padding: 24px;
+  position: fixed;
+  z-index: 80;
+}
+.history-modal-card {
+  background: rgba(17, 24, 34, 0.98);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.42);
+  display: grid;
+  gap: 18px;
+  max-height: min(760px, calc(100vh - 48px));
+  max-width: 760px;
+  overflow: auto;
+  padding: 28px;
+  position: relative;
+  width: min(760px, 100%);
+}
+.history-close-button { right: 18px; top: 18px; }
+.history-modal-head {
+  align-items: flex-start;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  padding-right: 44px;
+}
+.history-modal-head h2 { font-size: 1.65rem; margin: 2px 0 8px; }
+.history-modal-head p { color: #c6cfdf; line-height: 1.5; margin: 0; }
+.history-modal-icon {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  color: var(--gold);
+  display: inline-flex;
+  height: 48px;
+  justify-content: center;
+  width: 48px;
+}
+.history-modal-icon[data-kind="supply"] { color: var(--teal); }
+.history-modal-icon[data-kind="reserve"] { color: #d8a7ff; }
+.history-modal-icon[data-kind="channel"] { color: var(--blue); }
+.history-modal-icon[data-kind="fee"] { color: #58e0aa; }
+.history-modal-metrics {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.history-modal-metrics div,
+.history-modal-section {
+  background: rgba(8, 13, 24, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+}
+.history-modal-metrics div { display: grid; gap: 8px; padding: 16px; }
+.history-modal-metrics span { color: var(--muted); font-size: 0.78rem; font-weight: 850; text-transform: uppercase; }
+.history-modal-metrics strong { color: #fff4d7; }
+.history-modal-section {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+.history-modal-section > strong {
+  color: var(--muted);
+  font-size: 0.82rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.history-detail-list { display: grid; gap: 10px; }
+.history-detail-row {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 7px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 150px minmax(0, 1fr) auto;
+  min-height: 44px;
+  padding: 10px 12px;
+}
+.history-detail-row span { color: #aeb8cc; font-size: 0.8rem; font-weight: 850; }
+.history-detail-row code {
+  color: #e6edff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-detail-row button {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.055);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: #dce6ff;
+  display: inline-flex;
+  height: 30px;
+  justify-content: center;
+  width: 30px;
+}
+.history-detail-row button:hover { border-color: rgba(247, 184, 73, 0.45); color: var(--gold); }
+
 @media (max-width: 1180px) {
   .console-shell { grid-template-columns: 76px minmax(0, 1fr); }
   .console-rail { padding: 22px 10px; }
@@ -1760,6 +1882,13 @@ code {
   .panel-switcher { width: 100%; }
   .transaction-activity-row { grid-template-columns: auto minmax(0, 1fr); }
   .activity-meta { grid-column: 1 / -1; justify-items: start; min-width: 0; text-align: left; }
+  .history-modal-backdrop { padding: 14px; }
+  .history-modal-card { padding: 22px 16px; }
+  .history-modal-head,
+  .history-detail-row { grid-template-columns: 1fr; }
+  .history-modal-head { padding-right: 42px; }
+  .history-modal-metrics { grid-template-columns: 1fr; }
+  .history-detail-row button { justify-self: start; }
 }
 
 @media (max-width: 1180px) {

@@ -265,8 +265,8 @@ function LiquidityProvisionView({ dashboard, utilization, vaultReady, busy, supp
       <section className="console-panel lane-default-panel lane-insight-panel">
         <div className="panel-title split-title insight-title">
           <div>
-            <h2>{panelMode === "activity" ? "Transaction Activity" : "Active Channel Reserves"}</h2>
-            <p>{panelMode === "activity" ? "Supplies, withdrawals, claims, and capacity requests confirmed by Core." : "Reserved liquidity across connected Fiber lanes."}</p>
+            <h2>{panelMode === "activity" ? "LP History" : "Active Channel Reserves"}</h2>
+            <p>{panelMode === "activity" ? "Your supplies, withdrawals, fee claims, and vault reserve movement." : "Reserved liquidity across connected Fiber lanes."}</p>
           </div>
           <div className="panel-switcher" role="tablist" aria-label="Liquidity panel view">
             <button type="button" role="tab" aria-selected={panelMode === "activity"} data-active={panelMode === "activity"} onClick={() => setPanelMode("activity")}>
@@ -277,7 +277,7 @@ function LiquidityProvisionView({ dashboard, utilization, vaultReady, busy, supp
             </button>
           </div>
         </div>
-        {panelMode === "activity" ? <TransactionActivity dashboard={dashboard} /> : <ReserveTable dashboard={dashboard} />}
+        {panelMode === "activity" ? <TransactionActivity dashboard={dashboard} scope="lp" /> : <ReserveTable dashboard={dashboard} />}
       </section>
     </div>
   );
@@ -516,40 +516,47 @@ function VaultSuccessReceiptCard({ title, message, asset, amount, txHash, explor
   );
 }
 
-type TransactionActivityKind = "supply" | "withdraw" | "reserve" | "channel" | "fee";
+type TransactionActivityKind = "supply" | "withdraw" | "reserve" | "channel" | "fee" | "event";
 type TransactionActivityFilter = "all" | TransactionActivityKind;
+type TransactionActivityScope = Role;
+
+type TransactionActivityDetail = {
+  label: string;
+  value: string;
+  copyable?: boolean;
+};
 
 type TransactionActivityEntry = {
   id: string;
   kind: TransactionActivityKind;
   title: string;
   description: string;
-  amount: number;
-  asset: string;
+  amount: number | null;
+  asset: string | null;
   status: string;
   txHash: string | null;
   createdAt: string;
+  summary: string;
+  details: TransactionActivityDetail[];
 };
 
-function TransactionActivity({ dashboard }: { dashboard: Dashboard }) {
+function TransactionActivity({ dashboard, scope = dashboard.user.role, compact = false }: { dashboard: Dashboard; scope?: TransactionActivityScope; compact?: boolean }) {
   const [filter, setFilter] = useState<TransactionActivityFilter>("all");
-  const entries = useMemo(() => buildTransactionActivity(dashboard), [dashboard]);
+  const entries = useMemo(() => buildTransactionActivity(dashboard, scope), [dashboard, scope]);
+  const filters = useMemo(() => activityFilters(scope), [scope]);
   const filteredEntries = filter === "all" ? entries : entries.filter((entry) => entry.kind === filter);
-  const filters: { id: TransactionActivityFilter; label: string }[] = [
-    { id: "all", label: "All" },
-    { id: "supply", label: "Supply" },
-    { id: "withdraw", label: "Withdraw" },
-    { id: "reserve", label: "Reserve" },
-    { id: "channel", label: "Channel" },
-    { id: "fee", label: "Fee" },
-  ];
+  const [selectedEntry, setSelectedEntry] = useState<TransactionActivityEntry | null>(null);
+
+  useEffect(() => {
+    if (!filters.some((item) => item.id === filter)) setFilter("all");
+  }, [filter, filters]);
 
   if (!entries.length) {
-    return <EmptyState title="No transaction activity" text="Supplies, withdrawals, claims, and capacity requests will appear here after Core accepts them." />;
+    return <EmptyState title={activityEmptyTitle(scope)} text={activityEmptyText(scope)} />;
   }
 
   return (
-    <div className="transaction-activity-shell">
+    <div className={compact ? "transaction-activity-shell compact" : "transaction-activity-shell"}>
       <div className="activity-filter-bar" role="tablist" aria-label="Transaction activity filters">
         {filters.map((item) => (
           <button type="button" key={item.id} role="tab" aria-selected={filter === item.id} data-active={filter === item.id} onClick={() => setFilter(item.id)}>
@@ -562,7 +569,20 @@ function TransactionActivity({ dashboard }: { dashboard: Dashboard }) {
       ) : (
         <div className="transaction-activity-list">
           {filteredEntries.map((entry) => (
-            <article className="transaction-activity-row" key={entry.id} data-kind={entry.kind}>
+            <article
+              className="transaction-activity-row"
+              key={entry.id}
+              data-kind={entry.kind}
+              role="button"
+              tabIndex={0}
+              onClick={() => setSelectedEntry(entry)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  setSelectedEntry(entry);
+                }
+              }}
+            >
               <span className="activity-kind-icon">{activityIcon(entry.kind)}</span>
               <div className="activity-main">
                 <strong>{entry.title}</strong>
@@ -570,7 +590,7 @@ function TransactionActivity({ dashboard }: { dashboard: Dashboard }) {
                 {entry.txHash ? <TxMiniLink txHash={entry.txHash} label="Explorer" /> : null}
               </div>
               <div className="activity-meta">
-                <strong>{assetAmount(entry.amount, entry.asset)}</strong>
+                {entry.amount === null || !entry.asset ? null : <strong>{assetAmount(entry.amount, entry.asset)}</strong>}
                 <span className="status-tag" data-status={entry.status}>{statusLabel(entry.status)}</span>
                 <time>{formatActivityTime(entry.createdAt)}</time>
               </div>
@@ -578,6 +598,75 @@ function TransactionActivity({ dashboard }: { dashboard: Dashboard }) {
           ))}
         </div>
       )}
+      {selectedEntry ? <TransactionActivityModal entry={selectedEntry} onClose={() => setSelectedEntry(null)} /> : null}
+    </div>
+  );
+}
+
+function TransactionActivityModal({ entry, onClose }: { entry: TransactionActivityEntry; onClose: () => void }) {
+  useEffect(() => {
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [onClose]);
+
+  const amount = entry.amount !== null && entry.asset ? assetAmount(entry.amount, entry.asset) : null;
+
+  return (
+    <div className="history-modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <section className="history-modal-card" role="dialog" aria-modal="true" aria-label={entry.title + " details"} onMouseDown={(event) => event.stopPropagation()}>
+        <button type="button" className="receipt-close-button history-close-button" aria-label="Close history details" onClick={onClose}>
+          <X size={18} />
+        </button>
+        <div className="history-modal-head">
+          <span className="history-modal-icon" data-kind={entry.kind}>{activityIcon(entry.kind)}</span>
+          <div>
+            <span className="eyebrow">{entry.kind === "event" ? "Core Event" : "Transaction Record"}</span>
+            <h2>{entry.title}</h2>
+            <p>{entry.summary}</p>
+          </div>
+          <span className="status-tag" data-status={entry.status}>{statusLabel(entry.status)}</span>
+        </div>
+
+        <div className="history-modal-metrics">
+          {amount ? <Metric label="Amount" value={amount} /> : null}
+          <Metric label="Status" value={statusLabel(entry.status)} />
+          <Metric label="Recorded" value={formatActivityTime(entry.createdAt)} />
+        </div>
+
+        <div className="history-modal-section">
+          <strong>On-chain</strong>
+          {entry.txHash ? (
+            <>
+              <div className="history-detail-row">
+                <span>Tx hash</span>
+                <code title={entry.txHash}>{entry.txHash}</code>
+                <button type="button" aria-label="Copy transaction hash" title="Copy transaction hash" onClick={() => copyText(entry.txHash!)}><Copy size={14} /></button>
+              </div>
+              <a className="receipt-explorer-link" href={transactionExplorerUrl(entry.txHash)} target="_blank" rel="noreferrer">
+                View on testnet explorer <ExternalLink size={14} />
+              </a>
+            </>
+          ) : (
+            <p className="muted compact-note">No CKB transaction hash is attached to this ledger event.</p>
+          )}
+        </div>
+
+        <div className="history-modal-section">
+          <strong>Protocol Details</strong>
+          <div className="history-detail-list">
+            {entry.details.map((detail) => (
+              <div className="history-detail-row" key={detail.label + "-" + detail.value}>
+                <span>{detail.label}</span>
+                <code title={detail.value}>{detail.value}</code>
+                {detail.copyable ? <button type="button" aria-label={"Copy " + detail.label} title={"Copy " + detail.label} onClick={() => copyText(detail.value)}><Copy size={14} /></button> : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
     </div>
   );
 }
@@ -587,11 +676,44 @@ function activityIcon(kind: TransactionActivityKind) {
   if (kind === "withdraw") return <ArrowDownToLine size={18} />;
   if (kind === "fee") return <Banknote size={18} />;
   if (kind === "channel") return <Route size={18} />;
+  if (kind === "event") return <ReceiptText size={18} />;
   return <ReceiptText size={18} />;
 }
 
-function buildTransactionActivity(dashboard: Dashboard): TransactionActivityEntry[] {
-  const deposits = dashboard.deposits.map((deposit) => ({
+function activityFilters(scope: TransactionActivityScope): { id: TransactionActivityFilter; label: string }[] {
+  if (scope === "merchant") {
+    return [
+      { id: "all", label: "All" },
+      { id: "reserve", label: "Reserve" },
+      { id: "channel", label: "Channel" },
+      { id: "fee", label: "Fee" },
+    ];
+  }
+  return [
+    { id: "all", label: "All" },
+    { id: "supply", label: "Supply" },
+    { id: "withdraw", label: "Withdraw" },
+    { id: "reserve", label: "Reserve" },
+    { id: "channel", label: "Channel" },
+    { id: "fee", label: "Fee" },
+  ];
+}
+
+function activityEmptyTitle(scope: TransactionActivityScope) {
+  if (scope === "merchant") return "No merchant history";
+  if (scope === "lp") return "No LP history";
+  return "No transaction activity";
+}
+
+function activityEmptyText(scope: TransactionActivityScope) {
+  if (scope === "merchant") return "Reservations, lease fees, and Fiber execution records will appear here after this wallet requests capacity.";
+  if (scope === "lp") return "Supplies, withdrawals, fee claims, and reserve movement will appear here after Core accepts them.";
+  return "Supplies, withdrawals, claims, and capacity requests will appear here after Core accepts them.";
+}
+
+function buildTransactionActivity(dashboard: Dashboard, scope: TransactionActivityScope): TransactionActivityEntry[] {
+  const includeVaultActions = scope !== "merchant";
+  const deposits = includeVaultActions ? dashboard.deposits.map((deposit) => ({
     id: `deposit-${deposit.id}`,
     kind: "supply" as const,
     title: "Supply liquidity",
@@ -601,8 +723,14 @@ function buildTransactionActivity(dashboard: Dashboard): TransactionActivityEntr
     status: "settled",
     txHash: deposit.tx_hash,
     createdAt: deposit.created_at,
-  }));
-  const withdrawals = dashboard.withdrawals.map((withdrawal) => ({
+    summary: "This LP supply created or updated a receipt-backed vault position.",
+    details: [
+      { label: "LP", value: deposit.lp_name },
+      { label: "Wallet", value: shortAddress(deposit.ckb_address) },
+      { label: "Deposit ID", value: deposit.id, copyable: true },
+    ],
+  })) : [];
+  const withdrawals = includeVaultActions ? dashboard.withdrawals.map((withdrawal) => ({
     id: `withdrawal-${withdrawal.id}`,
     kind: "withdraw" as const,
     title: "Withdraw liquidity",
@@ -612,8 +740,14 @@ function buildTransactionActivity(dashboard: Dashboard): TransactionActivityEntr
     status: withdrawal.status,
     txHash: withdrawal.tx_hash,
     createdAt: withdrawal.created_at,
-  }));
-  const claims = dashboard.fee_claims.map((claim) => ({
+    summary: "Available LP liquidity returned from the vault to the connected wallet.",
+    details: [
+      { label: "LP", value: withdrawal.lp_name },
+      { label: "Position", value: withdrawal.position_id, copyable: true },
+      { label: "Receipt", value: withdrawal.receipt_cell_id, copyable: true },
+    ],
+  })) : [];
+  const claims = includeVaultActions ? dashboard.fee_claims.map((claim) => ({
     id: `claim-${claim.id}`,
     kind: "fee" as const,
     title: "Claim fees",
@@ -623,7 +757,12 @@ function buildTransactionActivity(dashboard: Dashboard): TransactionActivityEntr
     status: claim.status,
     txHash: claim.tx_hash,
     createdAt: claim.created_at,
-  }));
+    summary: "Claimable routing or lease fees were paid out to this LP position.",
+    details: [
+      { label: "Position", value: claim.position_id, copyable: true },
+      { label: "Claim ID", value: claim.id, copyable: true },
+    ],
+  })) : [];
   const requests = dashboard.liquidity_requests
     .filter((request) => request.request_tx_hash)
     .map((request) => ({
@@ -636,17 +775,109 @@ function buildTransactionActivity(dashboard: Dashboard): TransactionActivityEntr
       status: request.status,
       txHash: request.request_tx_hash,
       createdAt: request.created_at,
+      summary: requestActivitySummary(request),
+      details: requestActivityDetails(request),
     }));
+  const leaseFees = dashboard.liquidity_requests
+    .filter((request) => request.request_tx_hash && request.lease_fee > 0)
+    .map((request) => ({
+      id: `lease-fee-${request.id}`,
+      kind: "fee" as const,
+      title: scope === "merchant" ? "Lease fee posted" : "Lease fee earned",
+      description: scope === "merchant"
+        ? `Fee paid to reserve ${assetAmount(request.amount, request.asset)}`
+        : `${request.merchant_name} paid to reserve vault liquidity`,
+      amount: request.lease_fee,
+      asset: request.asset,
+      status: request.status,
+      txHash: request.request_tx_hash,
+      createdAt: request.created_at,
+      summary: scope === "merchant"
+        ? "This is the lease fee paid by the merchant to reserve LP vault liquidity. The full wallet delta can also include CKB cell occupied capacity and the network fee."
+        : "This lease fee is linked to a merchant reserve and is part of the LP yield accounting.",
+      details: [
+        { label: "Merchant", value: request.merchant_name },
+        { label: "Lease fee", value: assetAmount(request.lease_fee, request.asset) },
+        { label: "Reserved capacity", value: assetAmount(request.amount, request.asset) },
+        { label: "Request cell", value: request.request_cell_id, copyable: true },
+      ],
+    }));
+  const coreEvents = dashboard.activity.map((event) => ({
+    id: `event-${event.id}`,
+    kind: inferActivityKind(event.label),
+    title: event.label,
+    description: "Core ledger event",
+    amount: event.amount,
+    asset: event.asset,
+    status: inferActivityStatus(event.label),
+    txHash: null,
+    createdAt: event.created_at,
+    summary: "This is an off-chain Core ledger event. It explains LiquidLane state but is not itself a separate CKB transaction.",
+    details: [
+      { label: "Event ID", value: event.id, copyable: true },
+      { label: "Label", value: event.label },
+      { label: "Event status", value: statusLabel(inferActivityStatus(event.label)) },
+    ],
+  }));
 
-  return [...deposits, ...withdrawals, ...claims, ...requests]
+  return [...deposits, ...withdrawals, ...claims, ...requests, ...leaseFees, ...coreEvents]
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    .slice(0, 10);
+    .slice(0, scope === "merchant" ? 14 : 16);
+}
+
+function inferActivityKind(label: string): TransactionActivityKind {
+  const normalized = label.toLowerCase();
+  if (normalized.includes("deposit") || normalized.includes("suppl")) return "supply";
+  if (normalized.includes("withdraw")) return "withdraw";
+  if (normalized.includes("fee") || normalized.includes("claim")) return "fee";
+  if (normalized.includes("fiber") || normalized.includes("channel") || normalized.includes("funding")) return "channel";
+  if (normalized.includes("reserve") || normalized.includes("capacity") || normalized.includes("request")) return "reserve";
+  return "event";
+}
+
+function inferActivityStatus(label: string) {
+  const normalized = label.toLowerCase();
+  if (normalized.includes("fail") || normalized.includes("timed out") || normalized.includes("timeout") || normalized.includes("rejected")) return "failed";
+  if (normalized.includes("waiting") || normalized.includes("pending") || normalized.includes("required") || normalized.includes("submitted") || normalized.includes("handoff")) return "pending";
+  if (normalized.includes("released") || normalized.includes("expired")) return "released";
+  if (normalized.includes("channel open") || normalized.includes("active")) return "channel_open";
+  if (normalized.includes("settled") || normalized.includes("confirmed") || normalized.includes("deposit") || normalized.includes("withdraw") || normalized.includes("reserved receive capacity")) return "settled";
+  return "recorded";
+}
+
+function requestActivitySummary(request: LiquidityRequest) {
+  if (request.status === "failed") return "The on-chain reserve remains visible, but Fiber did not produce the funding transaction needed to activate the channel.";
+  if (request.status === "pending_fiber_channel") return "LP liquidity is reserved while LiquidLane waits for Fiber channel confirmation.";
+  if (request.status === "funding_submitted") return "The vault-funded CKB transaction was submitted; LiquidLane is waiting for Fiber to report the channel active.";
+  if (request.status === "funding_required") return "The merchant reserve is confirmed on CKB; LiquidLane is preparing the vault-funded transaction from LP liquidity.";
+  if (request.status === "channel_open") return "Fiber reports usable receive capacity for this merchant request.";
+  if (request.status === "settled") return "The Fiber channel settled and LP liquidity returned to vault accounting.";
+  if (request.status === "released" || request.status === "expired") return "This reserve no longer locks vault liquidity.";
+  return "This merchant reserve request is recorded on CKB and tracked by LiquidLane Core.";
+}
+
+function requestActivityDetails(request: LiquidityRequest): TransactionActivityDetail[] {
+  const details: TransactionActivityDetail[] = [
+    { label: "Merchant", value: request.merchant_name },
+    { label: "Wallet", value: shortAddress(request.ckb_address) },
+    { label: "Request cell", value: request.request_cell_id, copyable: true },
+    { label: "Lease fee", value: assetAmount(request.lease_fee, request.asset) },
+    { label: "Duration", value: request.duration_days + " days" },
+  ];
+  if (request.fiber_peer_pubkey) details.push({ label: "Fiber pubkey", value: request.fiber_peer_pubkey, copyable: true });
+  if (request.fiber_peer_address) details.push({ label: "Fiber address", value: request.fiber_peer_address, copyable: true });
+  if (request.fiber_temporary_channel_id) details.push({ label: "Fiber handoff ref", value: request.fiber_temporary_channel_id, copyable: true });
+  if (request.channel_id) details.push({ label: "Channel ID", value: request.channel_id, copyable: true });
+  if (request.fiber_note) details.push({ label: "Core note", value: request.fiber_note });
+  if (request.fiber_error) details.push({ label: "Fiber error", value: request.fiber_error });
+  details.push({ label: "Balance note", value: "JoyID balance change can include reserved capacity, request-cell occupied CKB, lease fee, and network fee." });
+  return details;
 }
 
 function requestActivityTitle(request: LiquidityRequest) {
   if (request.status === "channel_open") return "Fiber channel active";
   if (request.status === "settled") return "Fiber channel settled";
-  if (request.status === "funding_required") return "Vault funding required";
+  if (request.status === "funding_required") return "Vault funding preparing";
   if (request.status === "funding_submitted") return "Vault funding submitted";
   if (request.status === "pending_fiber_channel") return "Fiber confirmation pending";
   if (request.status === "released" || request.status === "expired") return "Capacity released";
@@ -655,7 +886,7 @@ function requestActivityTitle(request: LiquidityRequest) {
 }
 
 function requestActivityDescription(request: LiquidityRequest) {
-  if (request.status === "funding_required") return `${request.merchant_name} has reserved LP liquidity; funding transaction is next`;
+  if (request.status === "funding_required") return `${request.merchant_name} has reserved LP liquidity; funding transaction is being prepared`;
   if (request.status === "funding_submitted") return `${request.merchant_name} is waiting for Fiber to report the channel active`;
   if (request.status === "pending_fiber_channel") return `${request.merchant_name} is waiting for channel confirmation`;
   if (request.status === "channel_open") return `${request.merchant_name} can receive through the opened lane`;
@@ -730,10 +961,20 @@ function MerchantTerminalView({ dashboard, busy, quote, fiberRpcConfigured, fund
           <button type="submit" className="gold-button" disabled={busy === "request"}>{busy === "request" ? <Loader2 className="spin" size={16} /> : <ArrowRight size={16} />} Reserve capacity</button>
         </form>
         {quote ? (
-          <div className="quote-strip">
-            <Metric label="Capacity" value={assetAmount(quote.amount, quote.asset)} />
-            <Metric label="Est. fee" value={assetAmount(quote.lease_fee, quote.asset)} />
-            <span className="status-tag" data-status={quote.available ? "available" : "failed"}>{quote.available ? "available" : "insufficient"}</span>
+          <div className="quote-summary">
+            <div className="quote-strip">
+              <Metric label="Capacity" value={assetAmount(quote.amount, quote.asset)} />
+              <Metric label="Lease fee" value={assetAmount(quote.lease_fee, quote.asset)} />
+              <Metric label="Receiver reserve" value={assetAmount(quote.receiver_node_reserve_recommended, quote.asset) + " node balance"} />
+              <span className="status-tag" data-status={quote.available ? "available" : "failed"}>{quote.available ? "available" : "insufficient"}</span>
+            </div>
+            <div className="merchant-guidance receiver-reserve-note">
+              <HelpCircle size={18} />
+              <div>
+                <strong>Merchant cost is split into lease fee and Fiber receiver reserve.</strong>
+                <span>The lease fee is paid in the request transaction. The receiver Fiber node should hold at least {assetAmount(quote.receiver_node_reserve_min, quote.asset)}; keep {assetAmount(quote.receiver_node_reserve_recommended, quote.asset)} funded for this testnet flow.</span>
+              </div>
+            </div>
           </div>
         ) : null}
       </section>
@@ -747,6 +988,17 @@ function MerchantTerminalView({ dashboard, busy, quote, fiberRpcConfigured, fund
           <span className="count-pill">{dashboard.vault.active_requests} Active</span>
         </div>
         <RequestQueue requests={dashboard.liquidity_requests} busy={busy} fiberRpcConfigured={fiberRpcConfigured} fundingMode={fundingMode} />
+      </section>
+
+      <section className="console-panel merchant-history-panel">
+        <div className="panel-title split-title">
+          <div>
+            <h2>Merchant History</h2>
+            <p>Reservations, lease fees, and Fiber execution records for this wallet.</p>
+          </div>
+          <span className="count-pill">{buildTransactionActivity(dashboard, "merchant").length} Records</span>
+        </div>
+        <TransactionActivity dashboard={dashboard} scope="merchant" compact />
       </section>
     </div>
   );
@@ -899,10 +1151,10 @@ function RequestQueue({ requests, busy, fiberRpcConfigured = true, fundingMode =
               <code>Request: {shortId(request.request_cell_id)}</code>
               {request.request_tx_hash ? <TxMiniLink txHash={request.request_tx_hash} label="Request tx" /> : null}
               {request.fiber_note ? <span className="queue-note">{request.fiber_note}</span> : null}
-              {request.status === "funding_required" ? <span className="queue-note">Vault liquidity is reserved. LiquidLane still needs the v2 vault-funded CKB funding transaction before Fiber can become usable.</span> : null}
+              {request.status === "funding_required" ? <span className="queue-note">Vault liquidity is reserved. LiquidLane is preparing the vault-funded CKB transaction from LP liquidity.</span> : null}
               {request.status === "funding_submitted" ? <span className="queue-note">Vault-funded CKB transaction was submitted. Waiting for Fiber to report the channel active.</span> : null}
               {request.status === "pending_fiber_channel" ? <span className="queue-note">Vault liquidity remains reserved while LiquidLane waits for Fiber external-funding confirmation.</span> : null}
-              {request.status === "failed" && hasPeer ? <span className="queue-note">LiquidLane could not complete vault-funded Fiber execution. The reserve remains visible for repair or release.</span> : null}
+              {request.status === "failed" && hasPeer ? <span className="queue-note">Fiber did not complete the vault-funded transaction step. The reserve remains visible for retry or release.</span> : null}
               {request.status === "settled" ? <span className="queue-note">This Fiber channel settled; LP liquidity is back in vault availability.</span> : null}
               {!vaultExternalMode ? <span className="queue-note">Diagnostic mode: node-wallet funding is not product capacity.</span> : null}
               {request.status === "released" || request.status === "expired" ? <span className="queue-note">This reservation is no longer active; vault liquidity is available again.</span> : null}
@@ -1163,7 +1415,7 @@ function TransactionReceipt({ txHash, explorerUrl, label, success }: { txHash: s
 
 function TxMiniLink({ txHash, label }: { txHash: string; label: string }) {
   return (
-    <a className="tx-mini-link" href={transactionExplorerUrl(txHash)} target="_blank" rel="noreferrer" title={txHash}>
+    <a className="tx-mini-link" href={transactionExplorerUrl(txHash)} target="_blank" rel="noreferrer" title={txHash} onClick={(event) => event.stopPropagation()}>
       <ExternalLink size={12} /> {label} <code>{shortHash(txHash)}</code>
     </a>
   );
