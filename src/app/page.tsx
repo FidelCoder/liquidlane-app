@@ -435,7 +435,7 @@ export default function Home() {
   const [surface, setSurface] = useState<ConsoleSurface>(() => readNavigationState().surface);
   const [fiberRpcConfigured, setFiberRpcConfigured] = useState(false);
   const [coreHealth, setCoreHealth] = useState<HealthStatus | null>(null);
-  const [status, setStatus] = useState("Connect a CKB wallet to choose a LiquidLane service.");
+  const [, setStatus] = useState("Connect a CKB wallet to choose a LiquidLane service.");
   const [copiedWalletAddress, setCopiedWalletAddress] = useState(false);
   const loadHealth = useCallback(async function loadHealth() {
     try {
@@ -452,7 +452,7 @@ export default function Home() {
     }
   }, []);
 
-  const [loading, setLoading] = useState(false);
+  const [, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [supplyTx, setSupplyTx] = useState<SupplyTxState | null>(null);
   const [actionTx, setActionTx] = useState<ActionTxState | null>(null);
@@ -517,7 +517,6 @@ export default function Home() {
         setCkbAddress(data.user.ckb_address);
         window.localStorage.setItem(TOKEN_KEY, activeToken);
         window.localStorage.setItem(ADDRESS_KEY, data.user.ckb_address);
-        setStatus("Connected to LiquidLane Core.");
       } catch (error) {
         setDashboard(null);
         window.localStorage.removeItem(TOKEN_KEY);
@@ -1397,9 +1396,7 @@ export default function Home() {
         activeView={activeView}
         ckbAddress={ckbAddress}
         walletReady={hasReadySession}
-        loading={loading}
         busy={busy}
-        status={status}
         copiedWalletAddress={copiedWalletAddress}
         quote={quote}
         fiberRpcConfigured={fiberRpcConfigured}
@@ -1420,7 +1417,6 @@ export default function Home() {
         onConnectWallet={connectWallet}
         onCopyWalletAddress={copyWalletAddress}
         onSignOut={signOut}
-        onRefresh={() => refresh()}
         onDeposit={handleDeposit}
         onRequest={handleRequest}
         onWithdrawPosition={withdrawPosition}

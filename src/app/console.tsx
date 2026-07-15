@@ -13,7 +13,6 @@ import {
   Droplet,
   ExternalLink,
   Filter,
-  Gauge,
   HelpCircle,
   KeyRound,
   Landmark,
@@ -23,7 +22,6 @@ import {
   PlusCircle,
   ReceiptText,
   Route,
-  RefreshCw,
   Store,
   UserRound,
   X,
@@ -49,9 +47,7 @@ export type ConsoleAppProps = {
   activeView: ConsoleView;
   ckbAddress: string | null;
   walletReady: boolean;
-  loading: boolean;
   busy: string | null;
-  status: string;
   copiedWalletAddress: boolean;
   quote: LiquidityQuote | null;
   supplyTx: SupplyTxState | null;
@@ -66,7 +62,6 @@ export type ConsoleAppProps = {
   onConnectWallet: () => void;
   onCopyWalletAddress: (address: string) => void;
   onSignOut: () => void;
-  onRefresh: () => void | Promise<void>;
   onDeposit: (event: FormEvent<HTMLFormElement>) => void;
   onRequest: (event: FormEvent<HTMLFormElement>) => void;
   onWithdrawPosition: (id: string, amount?: number) => void;
@@ -85,9 +80,7 @@ export function ConsoleApp(props: ConsoleAppProps) {
     activeView,
     ckbAddress,
     walletReady,
-    loading,
     busy,
-    status,
     copiedWalletAddress,
     quote,
     supplyTx,
@@ -102,22 +95,12 @@ export function ConsoleApp(props: ConsoleAppProps) {
     onConnectWallet,
     onCopyWalletAddress,
     onSignOut,
-    onRefresh,
     onDeposit,
     onRequest,
     onWithdrawPosition,
     onClaimFees,
   } = props;
-  const vault = dashboard.vault;
-  const ckbRpcConfigured = coreHealth?.ckb_rpc_configured ?? false;
-  const betaReady = coreHealth?.beta_ready ?? false;
-  const executorEnabled = coreHealth?.executor_enabled ?? false;
-  const pendingHandoffs = coreHealth?.executor_pending_handoffs ?? 0;
   const fundingMode = coreHealth?.executor_funding_mode ?? "vault_external";
-  const vaultExternalMode = fundingMode === "vault_external";
-  const externalFundingReady = coreHealth?.external_funding_ready ?? false;
-  const externalFundingBlocker = coreHealth?.external_funding_blockers?.[0];
-  const fundingModeLabel = vaultExternalMode ? (externalFundingReady ? "Vault external ready" : "Vault funding pending") : "Node diagnostic";
   const title = activeView === "vault" ? "Portfolio" : serviceLabel(activeView);
   const subtitle = activeView === "lp"
     ? "Supply vault capacity and track your LP position."
@@ -136,9 +119,6 @@ export function ConsoleApp(props: ConsoleAppProps) {
           <ConsoleTabs activeView={activeView} onViewChange={onViewChange} />
           <div className="console-actions">
             <a href="https://github.com/FidelCoder/liquidlane-core/blob/main/README.md" target="_blank" rel="noreferrer" aria-label="Open LiquidLane docs"><HelpCircle size={18} /></a>
-            <button type="button" aria-label="Sync dashboard" title="Sync dashboard" onClick={() => onRefresh()} disabled={loading}>
-              {loading ? <Loader2 className="spin" size={18} /> : <RefreshCw size={18} />}
-            </button>
             {ckbAddress ? (
               <span className="console-wallet" data-state={walletReady ? "ready" : "restore"}>
                 <UserRound size={15} />
@@ -163,22 +143,6 @@ export function ConsoleApp(props: ConsoleAppProps) {
               <p className="eyebrow">Infrastructure Health</p>
               <h1>{title}</h1>
               <p>{subtitle}</p>
-              <div className="console-health-row">
-                <span><i /> {vault.network}</span>
-                <span>Vault {vault.configured ? "configured" : "pending"}</span>
-                <span>CKB RPC {ckbRpcConfigured ? "configured" : "missing"}</span>
-                <span>Fiber RPC {fiberRpcConfigured ? "configured" : "missing"}</span>
-                <span>Executor {executorEnabled ? "auto" : "paused"}</span>
-                <span>Funding {fundingModeLabel}</span>
-                {vaultExternalMode && !externalFundingReady && externalFundingBlocker ? <span>{externalFundingBlocker.length > 40 ? `${externalFundingBlocker.slice(0, 40)}...` : externalFundingBlocker}</span> : null}
-                {pendingHandoffs ? <span>{pendingHandoffs} funding wait{pendingHandoffs === 1 ? "" : "s"}</span> : null}
-                <span>Beta {betaReady ? "ready" : "warming"}</span>
-                <span>Synced {new Intl.DateTimeFormat("en-US", { hour: "2-digit", minute: "2-digit" }).format(new Date())}</span>
-                <span>{status.length > 48 ? `${status.slice(0, 48)}...` : status}</span>
-              </div>
-            </div>
-            <div className="console-hero-actions">
-              <button type="button" className="ghost-button" onClick={() => onRefresh()} disabled={loading}>{loading ? <Loader2 className="spin" size={16} /> : <Gauge size={16} />} Sync</button>
             </div>
           </section>
 
@@ -922,7 +886,6 @@ function MerchantTerminalView({ dashboard, busy, quote, fiberRpcConfigured, fund
           <Metric label="Channel-open capacity" value={assetAmount(walletAccess.open, vault.asset)} />
           <Metric label="Lease fees posted" value={assetAmount(walletAccess.fees, vault.asset)} />
         </div>
-        <p className="merchant-access-note">Reserved capacity is not usable yet. It becomes usable only after the vault-funded CKB funding transaction confirms and Fiber reports the channel active.</p>
       </section>
 
       <MerchantCapacityTimeline requests={dashboard.liquidity_requests} />
