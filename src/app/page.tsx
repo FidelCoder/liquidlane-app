@@ -13,7 +13,6 @@ import {
   RadioTower,
   Store,
   ShieldCheck,
-  Sparkles,
   UserRound,
 } from "lucide-react";
 import { ConsoleApp, type ConsoleView } from "./console";
@@ -181,29 +180,39 @@ export type LiquidityRequest = {
   ckb_address: string;
   asset: string;
   amount: number;
+  usable_capacity: number;
   duration_days: number;
   lease_fee: number;
   routing_fee_bps: number;
   fiber_peer_pubkey: string | null;
   fiber_peer_address: string | null;
+  receiver_ckb_address: string | null;
+  receiver_reserve_payment: number;
   request_cell_id: string;
   request_tx_hash: string | null;
   request_cell_out_point: string | null;
+  funding_tx_hash: string | null;
+  funding_out_point: string | null;
   status: LiquidityStatus;
   fiber_temporary_channel_id: string | null;
   channel_id: string | null;
   fiber_note: string | null;
   fiber_error: string | null;
   created_at: string;
+  updated_at: string;
 };
 
 export type LiquidityQuote = {
   asset: string;
   amount: number;
+  estimated_usable_capacity: number;
   duration_days: number;
   lease_fee: number;
   receiver_node_reserve_min: number;
-  receiver_node_reserve_recommended: number;
+  receiver_node_reserve_payment: number;
+  request_cell_bond: number;
+  receiver_ckb_address: string | null;
+  minimum_channel_capacity: number;
   routing_fee_bps: number;
   available: boolean;
   available_liquidity: number;
@@ -218,6 +227,8 @@ export type RequestIntent = {
   amount: number;
   duration_days: number;
   lease_fee: number;
+  receiver_ckb_address: string | null;
+  receiver_reserve_payment: number;
   routing_fee_bps: number;
   fiber_peer_pubkey: string | null;
   fiber_peer_address: string | null;
@@ -928,12 +939,14 @@ export default function Home() {
     const safeAmount = Number.isFinite(amount) ? amount : undefined;
     const fiberPeerPubkey = blankToUndefined(form.get("fiber_peer_pubkey"));
     const fiberPeerAddress = blankToUndefined(form.get("fiber_peer_address"));
+    const receiverCkbAddress = blankToUndefined(form.get("receiver_ckb_address"));
     const payload = {
       asset,
       amount,
       duration_days: durationDays,
       fiber_peer_pubkey: fiberPeerPubkey,
       fiber_peer_address: fiberPeerAddress,
+      receiver_ckb_address: receiverCkbAddress,
     };
     const progressTitle: Record<RequestProgressStep, string> = {
       vault: "Checking vault",
@@ -954,8 +967,8 @@ export default function Home() {
     });
     let signPopup: JoyIdPopup | undefined;
     try {
-      if (!Number.isFinite(amount) || amount <= 0) {
-        throw new Error("Requested capacity must be greater than zero.");
+      if (!Number.isFinite(amount) || amount < 200) {
+        throw new Error("Requested CKB capacity must be at least 200 CKB.");
       }
       if (!Number.isFinite(durationDays) || durationDays <= 0) {
         throw new Error("Request duration must be greater than zero.");
@@ -968,6 +981,9 @@ export default function Home() {
       }
       if (fiberPeerAddress && !isFiberMultiaddr(fiberPeerAddress)) {
         throw new Error("Fiber node address must be a multiaddr ending in /p2p/<peer_id>, for example /ip4/203.0.113.10/tcp/8228/p2p/12D3...");
+      }
+      if (!receiverCkbAddress || !receiverCkbAddress.startsWith("ckt1") || !looksLikeCkbAddress(receiverCkbAddress)) {
+        throw new Error("Enter the CKB testnet address used by the receiving Fiber node.");
       }
       if (!activeVault?.configured || !activeVault.address?.trim()) {
         throw new Error("LiquidLane vault is not configured yet.");
@@ -1461,7 +1477,11 @@ export default function Home() {
         <div className="landing-content">
           <div className="landing-copy">
             <p className="eyebrow">Liquidity markets for CKB</p>
-            <h1>The liquidity layer for CKB and Fiber payments.</h1>
+            <h1>
+              The liquidity layer
+              <span>for CKB and Fiber</span>
+              payments.
+            </h1>
             <p className="lede">Supply CKB into LiquidLane vaults, let merchants reserve receive capacity, and earn from the liquidity demand behind Fiber channel opens.</p>
             <p className="yield-badge">Target up to 10x yield on active vault supply.</p>
             <div className="hero-actions">
@@ -1475,7 +1495,10 @@ export default function Home() {
 
       <section className="service-section" id="services">
         <div className="section-heading">
-          <h2>{canBrowseServices ? "Choose your LiquidLane workflow." : needsWalletReconnect ? "Reconnect JoyID to continue with this wallet." : "Connect a CKB wallet to start."}</h2>
+          <div>
+            <p className="eyebrow">Choose workflow</p>
+            <h2>{canBrowseServices ? "Choose your LiquidLane workflow." : needsWalletReconnect ? "Reconnect JoyID to continue with this wallet." : "Connect a CKB wallet to start."}</h2>
+          </div>
           <p className="muted">Select a workflow to supply liquidity, reserve receive capacity, or review your portfolio.</p>
         </div>
         {needsWalletReconnect ? (
@@ -1496,7 +1519,7 @@ export default function Home() {
                 <h3>{service.title}</h3>
                 <p>{service.description}</p>
                 <button type="button" onClick={() => enterService(service.role)} disabled={busy === service.role}>
-                  {busy === service.role ? <Loader2 className="spin" size={16} /> : <Sparkles size={16} />} {actionLabel}
+                  {busy === service.role ? <Loader2 className="spin" size={16} /> : <ArrowRight size={16} />} {actionLabel}
                 </button>
               </article>
             );
@@ -1570,6 +1593,7 @@ function serviceLabel(role: Role) {
 }
 
 function statusLabel(status: string) {
+  if (status === "funding_submitted") return "funding finalizing";
   return status.replaceAll("_", " ");
 }
 
@@ -1585,9 +1609,9 @@ function settlementStepLabel(step: SettlementProgressStep) {
 function requestSuccessMessage(request: LiquidityRequest, amount: number, asset: string) {
   const capacity = assetAmount(amount, asset);
   if (request.status === "funding_required") return `${capacity} is reserved on-chain. LiquidLane is preparing the vault-funded CKB transaction from LP liquidity.`;
-  if (request.status === "funding_submitted") return `${capacity} is reserved and the vault-funded Fiber transaction has been submitted. Waiting for active channel confirmation.`;
+  if (request.status === "funding_submitted") return `${capacity} is reserved. Fiber is finalizing and broadcasting the collaborative vault-funded transaction.`;
   if (request.status === "pending_fiber_channel") return `${capacity} is reserved. LiquidLane is waiting for Fiber channel confirmation.`;
-  if (request.status === "channel_open") return `${capacity} is active through a confirmed Fiber channel.`;
+  if (request.status === "channel_open") return assetAmount(request.usable_capacity, asset) + " usable receive capacity is active through a confirmed Fiber channel (" + capacity + " vault allocation).";
   if (request.status === "settled") return `${capacity} channel has settled and LP liquidity is back in the vault.`;
   if (request.status === "failed") return `${capacity} is reserved on-chain, but Fiber execution stopped: ${request.fiber_error ?? "unknown Fiber error"}`;
   if (request.status === "expired" || request.status === "released") return `${capacity} reservation is no longer active; liquidity is back in the vault.`;

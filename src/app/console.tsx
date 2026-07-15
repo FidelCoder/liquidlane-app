@@ -7,15 +7,14 @@ import {
   ArrowRight,
   ArrowUpRight,
   Banknote,
-  Bell,
   CheckCircle2,
   CircleDollarSign,
   Copy,
+  Droplet,
   ExternalLink,
   Filter,
   Gauge,
   HelpCircle,
-  House,
   KeyRound,
   Landmark,
   Link2,
@@ -24,10 +23,8 @@ import {
   PlusCircle,
   ReceiptText,
   Route,
-  Settings,
-  SlidersHorizontal,
+  RefreshCw,
   Store,
-  TerminalSquare,
   UserRound,
   X,
 } from "lucide-react";
@@ -130,23 +127,18 @@ export function ConsoleApp(props: ConsoleAppProps) {
 
   return (
     <main className="console-shell">
-      <ConsoleRail activeView={activeView} onHome={onHome} onViewChange={onViewChange} />
       <section className="console-main">
         <header className="console-topbar">
-          <div className="console-titlebar">
-            <TerminalSquare size={22} />
-            <div>
-              <span>{activeView === "vault" ? "Vault Stats" : "Lane Operations"}</span>
-              <strong>{title}</strong>
-            </div>
-          </div>
+          <button type="button" className="console-home-brand" onClick={onHome} aria-label="Back to LiquidLane home">
+            <Droplet size={22} />
+            <strong>LiquidLane</strong>
+          </button>
           <ConsoleTabs activeView={activeView} onViewChange={onViewChange} />
           <div className="console-actions">
             <a href="https://github.com/FidelCoder/liquidlane-core/blob/main/README.md" target="_blank" rel="noreferrer" aria-label="Open LiquidLane docs"><HelpCircle size={18} /></a>
-            <button type="button" aria-label="Sync dashboard" onClick={() => onRefresh()} disabled={loading}>
-              {loading ? <Loader2 className="spin" size={18} /> : <Settings size={18} />}
+            <button type="button" aria-label="Sync dashboard" title="Sync dashboard" onClick={() => onRefresh()} disabled={loading}>
+              {loading ? <Loader2 className="spin" size={18} /> : <RefreshCw size={18} />}
             </button>
-            <span className="notification-dot" aria-label="Network status"><Bell size={18} /></span>
             {ckbAddress ? (
               <span className="console-wallet" data-state={walletReady ? "ready" : "restore"}>
                 <UserRound size={15} />
@@ -199,32 +191,15 @@ export function ConsoleApp(props: ConsoleAppProps) {
           ) : (
             <VaultStatsView dashboard={dashboard} utilization={utilization} claimableFees={claimableFees} busy={busy} onWithdrawPosition={onWithdrawPosition} onClaimFees={onClaimFees} />
           )}
+
+          <footer className="console-footer">
+            <span>LiquidLane</span>
+            <span>The liquidity layer for CKB and Fiber payments</span>
+            <span>Built on Nervos CKB &amp; Fiber Network</span>
+          </footer>
         </div>
       </section>
     </main>
-  );
-}
-
-function ConsoleRail({ activeView, onHome, onViewChange }: { activeView: ConsoleView; onHome: () => void; onViewChange: (view: ConsoleView) => void }) {
-  return (
-    <aside className="console-rail" aria-label="LiquidLane quick navigation">
-      <button type="button" className="rail-brand" onClick={onHome} aria-label="Back to LiquidLane home" title="Home">
-        <House size={22} />
-      </button>
-      <div className="rail-menu">
-        {consoleItems.map((item) => {
-          const Icon = item.icon;
-          return (
-            <button key={item.view} type="button" data-active={activeView === item.view} onClick={() => onViewChange(item.view)} aria-label={item.label} title={item.label}>
-              <Icon size={20} />
-            </button>
-          );
-        })}
-      </div>
-      <button type="button" className="rail-control" aria-label="Console settings" title="Console settings">
-        <SlidersHorizontal size={20} />
-      </button>
-    </aside>
   );
 }
 
@@ -397,7 +372,7 @@ function LiquidityVaultCard({ dashboard, utilization, vaultReady, busy, supplyTx
                 <form className="stack-form console-form" onSubmit={onDeposit}>
                   <div className="form-row">
                     <label>Asset<input name="asset" value={vault.asset} readOnly required /></label>
-                    <label>Amount ({vault.asset})<input name="amount" type="number" min="1" step="1" placeholder="100" required /></label>
+                    <label>Amount ({vault.asset})<input name="amount" type="number" min="200" step="1" placeholder="100" required /></label>
                   </div>
                   <div className="form-meter">
                     <span>Channel utilization after supply</span>
@@ -778,6 +753,26 @@ function buildTransactionActivity(dashboard: Dashboard, scope: TransactionActivi
       summary: requestActivitySummary(request),
       details: requestActivityDetails(request),
     }));
+  const fundingTransactions = dashboard.liquidity_requests
+    .filter((request) => request.funding_tx_hash)
+    .map((request) => ({
+      id: `funding-${request.id}`,
+      kind: "channel" as const,
+      title: "Fiber funding confirmed",
+      description: `${request.merchant_name} channel funded from LP vault liquidity`,
+      amount: request.amount,
+      asset: request.asset,
+      status: request.status,
+      txHash: request.funding_tx_hash,
+      createdAt: request.updated_at,
+      summary: "This is the final collaborative CKB funding transaction confirmed by Fiber. LP vault liquidity funds the channel; the receiver reserve is paid by the merchant request transaction.",
+      details: [
+        { label: "Merchant", value: request.merchant_name },
+        { label: "Request cell", value: request.request_cell_id, copyable: true },
+        ...(request.funding_out_point ? [{ label: "Funding outpoint", value: request.funding_out_point, copyable: true }] : []),
+        ...(request.channel_id ? [{ label: "Fiber channel ID", value: request.channel_id, copyable: true }] : []),
+      ],
+    }));
   const leaseFees = dashboard.liquidity_requests
     .filter((request) => request.request_tx_hash && request.lease_fee > 0)
     .map((request) => ({
@@ -798,6 +793,7 @@ function buildTransactionActivity(dashboard: Dashboard, scope: TransactionActivi
       details: [
         { label: "Merchant", value: request.merchant_name },
         { label: "Lease fee", value: assetAmount(request.lease_fee, request.asset) },
+    ...(request.receiver_reserve_payment > 0 ? [{ label: "Receiver reserve", value: assetAmount(request.receiver_reserve_payment, request.asset) }] : []),
         { label: "Reserved capacity", value: assetAmount(request.amount, request.asset) },
         { label: "Request cell", value: request.request_cell_id, copyable: true },
       ],
@@ -820,7 +816,7 @@ function buildTransactionActivity(dashboard: Dashboard, scope: TransactionActivi
     ],
   }));
 
-  return [...deposits, ...withdrawals, ...claims, ...requests, ...leaseFees, ...coreEvents]
+  return [...deposits, ...withdrawals, ...claims, ...requests, ...fundingTransactions, ...leaseFees, ...coreEvents]
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, scope === "merchant" ? 14 : 16);
 }
@@ -848,7 +844,7 @@ function inferActivityStatus(label: string) {
 function requestActivitySummary(request: LiquidityRequest) {
   if (request.status === "failed") return "The on-chain reserve remains visible, but Fiber did not produce the funding transaction needed to activate the channel.";
   if (request.status === "pending_fiber_channel") return "LP liquidity is reserved while LiquidLane waits for Fiber channel confirmation.";
-  if (request.status === "funding_submitted") return "The vault-funded CKB transaction was submitted; LiquidLane is waiting for Fiber to report the channel active.";
+  if (request.status === "funding_submitted") return "The vault-funded CKB candidate is assembled; Fiber is finalizing and broadcasting the collaborative transaction.";
   if (request.status === "funding_required") return "The merchant reserve is confirmed on CKB; LiquidLane is preparing the vault-funded transaction from LP liquidity.";
   if (request.status === "channel_open") return "Fiber reports usable receive capacity for this merchant request.";
   if (request.status === "settled") return "The Fiber channel settled and LP liquidity returned to vault accounting.";
@@ -866,11 +862,15 @@ function requestActivityDetails(request: LiquidityRequest): TransactionActivityD
   ];
   if (request.fiber_peer_pubkey) details.push({ label: "Fiber pubkey", value: request.fiber_peer_pubkey, copyable: true });
   if (request.fiber_peer_address) details.push({ label: "Fiber address", value: request.fiber_peer_address, copyable: true });
+  if (request.usable_capacity > 0) details.push({ label: "Usable receive capacity", value: assetAmount(request.usable_capacity, request.asset) });
+  if (request.receiver_ckb_address) details.push({ label: "Receiver CKB address", value: request.receiver_ckb_address, copyable: true });
   if (request.fiber_temporary_channel_id) details.push({ label: "Fiber handoff ref", value: request.fiber_temporary_channel_id, copyable: true });
+  if (request.funding_tx_hash) details.push({ label: "Final funding tx", value: request.funding_tx_hash, copyable: true });
+  if (request.funding_out_point) details.push({ label: "Funding outpoint", value: request.funding_out_point, copyable: true });
   if (request.channel_id) details.push({ label: "Channel ID", value: request.channel_id, copyable: true });
   if (request.fiber_note) details.push({ label: "Core note", value: request.fiber_note });
   if (request.fiber_error) details.push({ label: "Fiber error", value: request.fiber_error });
-  details.push({ label: "Balance note", value: "JoyID balance change can include reserved capacity, request-cell occupied CKB, lease fee, and network fee." });
+  details.push({ label: "Balance note", value: "JoyID balance change includes the request-cell bond, receiver reserve, lease fee, and network fee. LP channel capacity is not charged to the merchant wallet." });
   return details;
 }
 
@@ -878,7 +878,7 @@ function requestActivityTitle(request: LiquidityRequest) {
   if (request.status === "channel_open") return "Fiber channel active";
   if (request.status === "settled") return "Fiber channel settled";
   if (request.status === "funding_required") return "Vault funding preparing";
-  if (request.status === "funding_submitted") return "Vault funding submitted";
+  if (request.status === "funding_submitted") return "Vault funding finalizing";
   if (request.status === "pending_fiber_channel") return "Fiber confirmation pending";
   if (request.status === "released" || request.status === "expired") return "Capacity released";
   if (request.status === "failed") return "Capacity request failed";
@@ -953,7 +953,12 @@ function MerchantTerminalView({ dashboard, busy, quote, fiberRpcConfigured, fund
             <small className="field-help">Optional. Leave blank if you only have the pubkey. Never paste a ckt/ckb wallet address here.</small>
             <input name="fiber_peer_address" placeholder="/ip4/203.0.113.10/tcp/8228/p2p/12D3..." />
           </label>
-          <label>Requested capacity<input name="amount" type="number" min="1" placeholder="200" required /></label>
+          <label>
+            Receiver CKB reserve address
+            <small className="field-help">The testnet CKB address controlled by the receiving Fiber node.</small>
+            <input name="receiver_ckb_address" placeholder="ckt1..." required />
+          </label>
+          <label>Vault capacity allocation<small className="field-help">Includes Fiber channel cell reserve; the quote shows estimated usable receive capacity.</small><input name="amount" type="number" min="200" placeholder="200" required /></label>
           <div className="form-row">
             <label>Asset<input name="asset" value={vault.asset} readOnly required /></label>
             <label>Days<input name="duration_days" type="number" min="1" defaultValue="30" required /></label>
@@ -963,16 +968,18 @@ function MerchantTerminalView({ dashboard, busy, quote, fiberRpcConfigured, fund
         {quote ? (
           <div className="quote-summary">
             <div className="quote-strip">
-              <Metric label="Capacity" value={assetAmount(quote.amount, quote.asset)} />
+              <Metric label="Vault allocation" value={assetAmount(quote.amount, quote.asset)} />
+              <Metric label="Est. usable receive" value={assetAmount(quote.estimated_usable_capacity, quote.asset)} />
               <Metric label="Lease fee" value={assetAmount(quote.lease_fee, quote.asset)} />
-              <Metric label="Receiver reserve" value={assetAmount(quote.receiver_node_reserve_recommended, quote.asset) + " node balance"} />
+              <Metric label="Request bond" value={assetAmount(quote.request_cell_bond, quote.asset)} />
+              <Metric label="Receiver reserve" value={assetAmount(quote.receiver_node_reserve_payment, quote.asset)} />
               <span className="status-tag" data-status={quote.available ? "available" : "failed"}>{quote.available ? "available" : "insufficient"}</span>
             </div>
             <div className="merchant-guidance receiver-reserve-note">
               <HelpCircle size={18} />
               <div>
-                <strong>Merchant cost is split into lease fee and Fiber receiver reserve.</strong>
-                <span>The lease fee is paid in the request transaction. The receiver Fiber node should hold at least {assetAmount(quote.receiver_node_reserve_min, quote.asset)}; keep {assetAmount(quote.receiver_node_reserve_recommended, quote.asset)} funded for this testnet flow.</span>
+                <strong>One approval funds the complete request.</strong>
+                <span>{assetAmount(quote.receiver_node_reserve_payment, quote.asset)} goes to the receiver node: {assetAmount(quote.receiver_node_reserve_min, quote.asset)} protocol reserve plus fee headroom. The LP vault supplies the allocation; Fiber retains {assetAmount(quote.receiver_node_reserve_min, quote.asset)} on the LiquidLane side for channel cell capacity.</span>
               </div>
             </div>
           </div>
@@ -1029,6 +1036,7 @@ function MerchantCapacityTimeline({ requests }: { requests: LiquidityRequest[] }
         ))}
       </div>
       {latest?.request_tx_hash ? <TxMiniLink txHash={latest.request_tx_hash} label="Request tx" /> : null}
+      {latest?.funding_tx_hash ? <TxMiniLink txHash={latest.funding_tx_hash} label="Funding tx" /> : null}
       {latest?.fiber_error ? <p className="error-text">{latest.fiber_error}</p> : null}
     </section>
   );
@@ -1055,11 +1063,11 @@ function merchantTimelineSteps(request?: LiquidityRequest) {
 
 function merchantWalletAccess(dashboard: Dashboard) {
   const activeReservations = dashboard.reservations.filter((reservation) => reservation.status === "reserved");
-  const openReservations = dashboard.reservations.filter((reservation) => reservation.status === "deployed");
+  const openRequests = dashboard.liquidity_requests.filter((request) => request.status === "channel_open");
   const requestsWithFees = dashboard.liquidity_requests.filter((request) => request.request_tx_hash);
   return {
     reserved: activeReservations.reduce((total, reservation) => total + reservation.amount, 0),
-    open: openReservations.reduce((total, reservation) => total + reservation.amount, 0),
+    open: openRequests.reduce((total, request) => total + request.usable_capacity, 0),
     fees: requestsWithFees.reduce((total, request) => total + request.lease_fee, 0),
   };
 }
@@ -1145,15 +1153,17 @@ function RequestQueue({ requests, busy, fiberRpcConfigured = true, fundingMode =
             <span className="queue-status"><Link2 size={15} /></span>
             <div>
               <strong>{assetAmount(request.amount, request.asset)}</strong>
+              {request.status === "channel_open" ? <span>Usable: {assetAmount(request.usable_capacity, request.asset)}</span> : null}
               <span>{request.merchant_name} - {request.duration_days} days</span>
               {request.fiber_peer_pubkey ? <code>Peer: {shortPubkey(request.fiber_peer_pubkey)}</code> : <span>No Fiber peer attached</span>}
               {request.fiber_peer_address ? <code>Address: {shortFiberAddress(request.fiber_peer_address)}</code> : null}
               <code>Request: {shortId(request.request_cell_id)}</code>
               {request.request_tx_hash ? <TxMiniLink txHash={request.request_tx_hash} label="Request tx" /> : null}
+              {request.funding_tx_hash ? <TxMiniLink txHash={request.funding_tx_hash} label="Funding tx" /> : null}
               {request.fiber_note ? <span className="queue-note">{request.fiber_note}</span> : null}
               {request.status === "funding_required" ? <span className="queue-note">Vault liquidity is reserved. LiquidLane is preparing the vault-funded CKB transaction from LP liquidity.</span> : null}
-              {request.status === "funding_submitted" ? <span className="queue-note">Vault-funded CKB transaction was submitted. Waiting for Fiber to report the channel active.</span> : null}
-              {request.status === "pending_fiber_channel" ? <span className="queue-note">Vault liquidity remains reserved while LiquidLane waits for Fiber external-funding confirmation.</span> : null}
+              {request.status === "funding_submitted" ? <span className="queue-note">Vault-funded CKB candidate is assembled. Fiber is finalizing the collaborative transaction.</span> : null}
+              {request.status === "pending_fiber_channel" ? <span className="queue-note">Vault liquidity remains reserved while LiquidLane waits for Fiber collaborative funding confirmation.</span> : null}
               {request.status === "failed" && hasPeer ? <span className="queue-note">Fiber did not complete the vault-funded transaction step. The reserve remains visible for retry or release.</span> : null}
               {request.status === "settled" ? <span className="queue-note">This Fiber channel settled; LP liquidity is back in vault availability.</span> : null}
               {!vaultExternalMode ? <span className="queue-note">Diagnostic mode: node-wallet funding is not product capacity.</span> : null}
@@ -1502,6 +1512,7 @@ function serviceLabel(role: ConsoleView) {
 }
 
 function statusLabel(status: string) {
+  if (status === "funding_submitted") return "funding finalizing";
   return status.replaceAll("_", " ");
 }
 
