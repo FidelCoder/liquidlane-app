@@ -15,7 +15,7 @@ const SHANNONS_PER_CKB = BigInt(100_000_000);
 const MAX_COLLECTION_ROUNDS = 10;
 const VAULT_DATA_LEN = 33;
 const REQUEST_DATA_LEN = 26;
-const FEE_MARGIN = BigInt(2) * SHANNONS_PER_CKB;
+const FEE_MARGIN = BigInt(1_000_000);
 const CELL_CAPACITY_PAD = BigInt(2) * SHANNONS_PER_CKB;
 const JOYID_CELL_DEP_TX_HASH = process.env.NEXT_PUBLIC_JOYID_CELL_DEP_TX_HASH;
 const JOYID_CELL_DEP_INDEX = process.env.NEXT_PUBLIC_JOYID_CELL_DEP_INDEX ?? "0x0";
@@ -62,6 +62,8 @@ type RequestIntent = {
   amount: number;
   duration_days: number;
   lease_fee: number;
+  receiver_ckb_address: string | null;
+  receiver_reserve_payment: number;
 };
 
 type RpcCell = {
@@ -143,6 +145,11 @@ export async function reserveVaultCapacity(
     throw new Error("LiquidLane executor address is not configured for capacity requests.");
   }
   const operatorLock = toJoyScript(addressToScript(options.vault.executor_address));
+  if (!options.intent.receiver_ckb_address?.trim()) {
+    throw new Error("Fiber receiver reserve address is missing from the request intent.");
+  }
+  const receiverLock = toJoyScript(addressToScript(options.intent.receiver_ckb_address));
+  const receiverReserve = ckbAmount(options.intent.receiver_reserve_payment);
 
   reportProgress(options, popup, "vault", "Loading the active vault cell for the capacity reservation.");
   const vaultCell = await loadVaultCell(options.vault, scripts);
@@ -157,7 +164,7 @@ export async function reserveVaultCapacity(
   const requestType = buildRequestType(userLock, operatorLock, vaultCell.type, scripts, options.intent.id);
   const requestCapacity = occupiedCapacity(operatorLock, requestType, REQUEST_DATA_LEN) + CELL_CAPACITY_PAD;
   const minChangeCapacity = occupiedCapacity(userLock, null, 0) + CELL_CAPACITY_PAD;
-  const requiredFunding = requestCapacity + leaseFee.shannons + minChangeCapacity + FEE_MARGIN;
+  const requiredFunding = requestCapacity + leaseFee.shannons + receiverReserve.shannons + minChangeCapacity + FEE_MARGIN;
 
   reportProgress(options, popup, "funding", "Selecting a JoyID CKB cell to create the request cell.");
   const funding = selectFunding(await collectFundingCells(userLock), requiredFunding);
@@ -167,6 +174,8 @@ export async function reserveVaultCapacity(
     funding,
     userLock,
     operatorLock,
+    receiverLock,
+    receiverReserve,
     vaultCell,
     requestType,
     requestCapacity,
@@ -193,6 +202,8 @@ function buildRequestTransaction(input: {
   funding: { inputs: RequestInput[]; total: bigint };
   userLock: JoyScript;
   operatorLock: JoyScript;
+  receiverLock: JoyScript;
+  receiverReserve: { shannons: bigint };
   vaultCell: VaultCell;
   requestType: JoyScript;
   requestCapacity: bigint;
@@ -200,7 +211,7 @@ function buildRequestTransaction(input: {
   scripts: RequiredScripts;
   expiry: bigint;
 }): CKBTransaction {
-  const spendCapacity = input.requestCapacity + input.leaseFee.shannons + FEE_MARGIN;
+  const spendCapacity = input.requestCapacity + input.leaseFee.shannons + input.receiverReserve.shannons + FEE_MARGIN;
   const changeCapacity = input.funding.total - spendCapacity;
   if (changeCapacity < input.minChangeCapacity) {
     throw new Error("Funding cell does not leave enough capacity for JoyID change after request creation.");
@@ -228,6 +239,10 @@ function buildRequestTransaction(input: {
         type: input.requestType,
       },
       {
+        capacity: toHex(input.receiverReserve.shannons),
+        lock: input.receiverLock,
+      },
+      {
         capacity: toHex(changeCapacity),
         lock: input.userLock,
       },
@@ -239,6 +254,7 @@ function buildRequestTransaction(input: {
         feeBalance: input.vaultCell.data.feeBalance + input.leaseFee.units,
       }),
       requestDataHex({ status: 1, amount: input.amount.units, leaseFee: input.leaseFee.units, expiry: input.expiry }),
+      "0x",
       "0x",
     ],
     witnesses: [emptyWitness(), ...input.funding.inputs.slice(1).map(() => "0x"), "0x"],
