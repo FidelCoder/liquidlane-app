@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "LiquidLane",
-  description: "On-demand stablecoin liquidity for Fiber payment channels.",
+  description: "Vault-funded liquidity for CKB and Fiber payment channels.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
