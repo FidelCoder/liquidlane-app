@@ -870,6 +870,9 @@ function MerchantTerminalView({ dashboard, busy, quote, fiberRpcConfigured, fund
 }) {
   const vault = dashboard.vault;
   const walletAccess = merchantWalletAccess(dashboard);
+  const walletCommitment = quote
+    ? quote.request_cell_bond + quote.receiver_node_reserve_payment + quote.lease_fee
+    : 0;
   return (
     <div className="console-grid merchant-grid">
       <section className="console-panel merchant-access-panel">
@@ -936,13 +939,14 @@ function MerchantTerminalView({ dashboard, busy, quote, fiberRpcConfigured, fund
               <Metric label="Lease fee" value={assetAmount(quote.lease_fee, quote.asset)} />
               <Metric label="Request bond" value={assetAmount(quote.request_cell_bond, quote.asset)} />
               <Metric label="Receiver reserve" value={assetAmount(quote.receiver_node_reserve_payment, quote.asset)} />
+              <Metric label="Wallet commitment" value={assetAmount(walletCommitment, quote.asset)} />
               <span className="status-tag" data-status={quote.available ? "available" : "failed"}>{quote.available ? "available" : "insufficient"}</span>
             </div>
             <div className="merchant-guidance receiver-reserve-note">
               <HelpCircle size={18} />
               <div>
-                <strong>One approval funds the complete request.</strong>
-                <span>{assetAmount(quote.receiver_node_reserve_payment, quote.asset)} goes to the receiver node: {assetAmount(quote.receiver_node_reserve_min, quote.asset)} protocol reserve plus fee headroom. The LP vault supplies the allocation; Fiber retains {assetAmount(quote.receiver_node_reserve_min, quote.asset)} on the LiquidLane side for channel cell capacity.</span>
+                <strong>Your wallet commitment is separate from the LP vault allocation.</strong>
+                <span>Your wallet commits {assetAmount(walletCommitment, quote.asset)} plus the CKB network fee: {assetAmount(quote.request_cell_bond, quote.asset)} request bond, {assetAmount(quote.receiver_node_reserve_payment, quote.asset)} receiver reserve, and {assetAmount(quote.lease_fee, quote.asset)} lease fee. The LP vault separately allocates {assetAmount(quote.amount, quote.asset)} to the Fiber channel.</span>
               </div>
             </div>
           </div>
