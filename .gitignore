@@ -27,3 +27,12 @@ pnpm-debug.log*
 *.tsbuildinfo
 next-env.d.ts
 .vercel
+/test-results/
+/playwright-report/
+
+# Local proposals, task lists, and planning notes
+*proposal*.md
+*plan*.md
+*task*.md
+TASKS.md
+/docs/spark-*.md

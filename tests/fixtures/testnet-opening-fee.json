@@ -1,0 +1,82 @@
+{
+  "source": "https://pudge.explorer.nervos.org/transaction/0xe5e88a90687ad40843a926e70cf85bde8a1950242654745af3ebc19d314a6735",
+  "note": "Existing public native-wallet fee payment from the recorded testnet pilot. Used as a serialization/hash oracle; never rebroadcast by tests.",
+  "transaction": {
+    "cell_deps": [
+      {
+        "dep_type": "dep_group",
+        "out_point": {
+          "index": "0x0",
+          "tx_hash": "0xf8de3bb47d055cdf460d93a2a6e1b05f7432f9777c8c474abf4eec1d4aee5d37"
+        }
+      }
+    ],
+    "hash": "0xe5e88a90687ad40843a926e70cf85bde8a1950242654745af3ebc19d314a6735",
+    "header_deps": [],
+    "inputs": [
+      {
+        "previous_output": {
+          "index": "0x2",
+          "tx_hash": "0x16e05c95a87d4da883f34234eb6ea07d7f89141bbcb8b5ce5dbc3195e5f6c33b"
+        },
+        "since": "0x0"
+      }
+    ],
+    "outputs": [
+      {
+        "capacity": "0x16b969d00",
+        "lock": {
+          "args": "0x7792a52e7b70b480ce82e836f847e80790689218",
+          "code_hash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+          "hash_type": "type"
+        },
+        "type": null
+      },
+      {
+        "capacity": "0x7ea8ed044",
+        "lock": {
+          "args": "0x920bdd658419b9f02a57963ebc3f9626493236f5",
+          "code_hash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+          "hash_type": "type"
+        },
+        "type": null
+      }
+    ],
+    "outputs_data": [
+      "0x",
+      "0x"
+    ],
+    "version": "0x0",
+    "witnesses": [
+      "0x5500000010000000550000005500000041000000ae548aef7d486fa2eee5edc7183628bf9cca4b69e02510eda4702ddc3ac38c044ad917e63dcaeaff7744448ec8a6f96059694dd4d8594515844c5210b7d3fac501"
+    ]
+  },
+  "order": {
+    "id": "968e1e0cfe39f30a2c0cba3f9df28df5b92078a3c1ed847d136880fb9fae3710",
+    "owner": "ckt1qzda0cr08m85hc8jlnfp3zer7xulejywt49kt2rr0vthywaa50xwsqvjp0wktpqeh8cz54uk867rl93xfyerdagpaf7ae",
+    "quote": {
+      "capacity_ckb": 500,
+      "expires_at": 1790360368,
+      "fee_recipient": "ckt1qzda0cr08m85hc8jlnfp3zer7xulejywt49kt2rr0vthywaa50xwsqthj2jju7mskjqvaqhgxmuy06q8jp5fyxqnefz3j",
+      "funding_ckb": 600,
+      "merchant_account": "ckt1qzda0cr08m85hc8jlnfp3zer7xulejywt49kt2rr0vthywaa50xwsqvjp0wktpqeh8cz54uk867rl93xfyerdagpaf7ae",
+      "merchant_address": "/ip4/127.0.0.1/tcp/18328/p2p/QmPtcWne1hsxKL3b543PMuxRLb3rc2VvaP6aPFFHmEVvqG",
+      "merchant_node": "c2db3caf-fe12-48ac-8354-3a1af4ce407a",
+      "merchant_pubkey": "039a32103641975837d9ba52477e57be2918b16e4040c5e5d0da8d3316d46e4e50",
+      "merchant_reserve_ckb": 99,
+      "network": "testnet",
+      "nonce": "e1b26504e1ec4b6b8055b12eff4f3936c827606aad1c45fcba4363d3a10eca97",
+      "opening_fee_ckb": 61,
+      "order_id": "968e1e0cfe39f30a2c0cba3f9df28df5b92078a3c1ed847d136880fb9fae3710",
+      "protocol": "liquidlane-marketplace/1",
+      "provider_node": "27732fb7-5877-496b-8813-ccea65068d1d",
+      "provider_pubkey": "0290cfbbee4c4f2f24cd6f0875726713574d1f4621eeb5d8fc5e30f235d7e80ea1",
+      "provider_reserve_ckb": 99,
+      "public_channel": true
+    },
+    "quote_hash": "75015c7b8e5386056fbf5cb29f042779ae7ff1c731259eeccac25aca9487f4d7",
+    "provider_signature": "6db6f344805832507aa10f72e3949eab8246d99c5c74ff675efb040d5432886920e9858dc87ae7fb4d492ecd4efbb398539028449f57d1aef165da0c0e0b9d43",
+    "status": "delivered",
+    "fee_status": "paid"
+  }
+}

@@ -1,76 +1,51 @@
 # LiquidLane App
 
-CKB wallet-authenticated web app for stablecoin liquidity vaults, Fiber capacity requests, and LP yield tracking on LiquidLane.
+Merchant and provider interface for the LiquidLane CKB testnet marketplace. Providers fund native Fiber channels from their own nodes; merchants purchase initial receive capacity and pay the opening fee after verified delivery.
 
-LiquidLane helps LPs deposit stablecoin liquidity and lets merchants, wallets, and apps request Fiber payment-channel capacity on demand.
+## Run
 
-## Development
+Requires Node 22.
 
-```bash
+```sh
 cp .env.example .env.local
-npm install
+npm ci
 npm run dev
 ```
 
-The app runs at `http://localhost:3000` by default.
+Core defaults to `http://127.0.0.1:18080`; the app defaults to `http://localhost:3000`. Set `NEXT_PUBLIC_API_BASE_URL` to your actual Core URL before building. Configure the exact frontend origin in Core's `LIQUIDLANE_MARKET_ORIGIN`; use HTTPS for a hosted deployment.
 
-## Product Entry
+## Journeys
 
-The first screen is a landing page with wallet connect in the top bar. After a CKB wallet is connected, users choose a LiquidLane service: supply liquidity, request receive capacity, or operate lanes. Choosing a service opens a Core wallet session without asking the wallet to sign again.
+- **Request Capacity · Merchant:** browse provider offers, pair your own receiving node under **My receiving nodes**, and follow your signed quote under **My requests**. Your wallet pays the opening fee after delivery; your Fiber node funds its native channel reserve.
+- **Supply Liquidity · Provider:** connect your funding node, add CKB to its wallet, and publish its capacity and opening fee under **My offers & nodes**. The connector handles accepted requests automatically within your limits; follow delivery and fees under **Merchant requests**. Merchant nodes and setup fields do not appear in this workspace.
+- **Portfolio:** view real activity and recorded fees across both roles, with filters for requests as a merchant or a provider. Each order names both parties and the current actor.
 
-## CKB Wallet Flow
+Node setup asks for a display name, creates a one-time pairing code, and downloads a pairing file. On Linux x86_64, provider setup defaults to `liquidlane-connector setup ./liquidlane-pairing.json --new-node --background`: it creates an unfunded Fiber node, verifies its identity/network, and starts Fiber and its connector as local user services. Install the connector before generating the ten-minute code. Existing-node setup uses `--background` without `--new-node`; manual setup remains available on other systems. Keys and the startup credential stay local. The background process does not need an open terminal; setup reports whether automatic startup works at boot or at login. The browser confirms pairing, online status, and funding readiness. A fresh paired background-service heartbeat advances provider setup to **Add capital**, showing the actual node-signed CKB funding address, available wallet balance, and minimum capital needed. The wallet signs a direct CKB transfer; signed bytes are saved before submission and retries reuse the same transaction. Only the node’s real on-chain balance makes capital available for offers. The same funding wallet is recognized without asking it to transfer to itself. Publishing requires a connected, funded node. Pending setup survives refresh and role switching; provider funding policy appears only in provider setup.
 
-The app uses JoyID on CKB:
+Requests track quote, acceptance, automatic channel opening, test payment, delivery verification, and direct fee payment. Listings identify automatic providers using their signed connector policy. New provider setup serves any merchant within the provider's per-order and total funding limits; no merchant addresses or per-order approval command are required. Channel state is separate from fee status.
 
-1. Connect JoyID and read the CKB address.
-2. Choose a service and open a Core wallet session.
-3. Sign only when confirming a value-moving action.
-4. Supplying liquidity first creates a Core vault intent with the active vault address and memo.
-5. The wallet signs a vault update transaction that spends the active vault cell, mints an LP receipt, dry-runs, broadcasts, then Core settles the intent after chain verification.
+JoyID connections require an additional signed login challenge. Login and order approval are verified by Core. Node private keys remain on the node machine. Wallet sessions are stored in the current browser tab and expire on the server.
 
-## Fiber Lifecycle
+Direct opening-fee transactions normalize JoyID's `dep_group` enum to the SDK's `depGroup` spelling before hashing, without changing the signed bytes. They are checked for the accepted recipient/amount, dry-run, then saved before broadcasting. The UI shows signing/submission progress and checks confirmation automatically while the request is open. Pending or committed saved payments reuse their existing hash; retries broadcast the same signed transaction only when it is unknown to the node. Keep that browser's storage until payment has been reconciled.
 
-Capacity starts as `requested`. Opening a channel sends the request to LiquidLane Core, which submits `open_channel` to a configured Fiber node. If Core has no `FIBER_RPC_URL`, the action fails clearly and the UI does not invent channel ids.
+Providers fund their own Fiber node wallet and publish an offer. The connector verifies the merchant's acceptance and checks funds and limits before opening automatically. Legacy restricted/manual configurations remain visibly identified until their operator updates setup. The opening fee is not atomic with delivery and can remain unpaid; a provider can waive it. Initial capacity is consumed by payments. There is no guaranteed duration or passive yield.
 
-Set `NEXT_PUBLIC_API_BASE_URL` if LiquidLane Core is not running on `http://localhost:8080`.
-Set `NEXT_PUBLIC_CKB_RPC_URL` to a CKB RPC endpoint that accepts `get_cells` and `send_transaction`.
-Set `NEXT_PUBLIC_JOYID_AGGREGATOR_URL` if JoyID sub-key unlock proofs need a custom CoTA aggregator; the beta app defaults to public CKB testnet endpoints.
-Set `NEXT_PUBLIC_CKB_EXPLORER_URL` to the CKB testnet explorer base URL used for deployment links.
-The vault address is loaded from LiquidLane Core through `/vault`; configure it on the backend.
+## Checks and deployment
 
-## Vercel Environment
-
-Set these for the hosted frontend:
-
-```env
-NEXT_PUBLIC_API_BASE_URL=https://<render-core-service>.onrender.com
-NEXT_PUBLIC_CKB_NETWORK=testnet
-NEXT_PUBLIC_JOYID_APP_URL=https://testnet.joyid.dev
-NEXT_PUBLIC_JOYID_SERVER_URL=https://api.testnet.joyid.dev/api/v1
-NEXT_PUBLIC_JOYID_AGGREGATOR_URL=https://cota.nervina.dev/aggregator
-NEXT_PUBLIC_CKB_RPC_URL=https://testnet.ckb.dev/rpc
-NEXT_PUBLIC_CKB_EXPLORER_URL=https://pudge.explorer.nervos.org
-```
-
-Optional JoyID cell dep overrides are only needed if JoyID rotates its testnet code cell:
-
-```env
-NEXT_PUBLIC_JOYID_CELL_DEP_TX_HASH=0x...
-NEXT_PUBLIC_JOYID_CELL_DEP_INDEX=0x0
-NEXT_PUBLIC_JOYID_CELL_DEP_TYPE=code
-```
-
-The frontend does not own vault truth. It loads the active vault address, vault cell out-point, and deployed script references from Core through `/vault` and `/dashboard`.
-
-## Testnet Script Deployment
-
-The public app does not expose script deployment controls. LiquidLane scripts and the active vault are deployed from Core-side tooling, then Core exposes the active vault config through `/vault` and `/dashboard`.
-
-Use `liquidlane-core/docs/testnet-deployment.md` as the source of truth for active CKB testnet script transactions, code-cell out-points, vault out-point, and explorer links.
-
-## Checks
-
-```bash
+```sh
 npm run lint
 npm run build
+npm start
 ```
+
+Next.js is pinned to 16.3.6; the pinned TypeScript 5 compiler API performs full build typechecking. The Dockerfile builds a standalone server and requires the real `NEXT_PUBLIC_API_BASE_URL` build argument. Marketplace backend/connector documentation lives in `liquidlane-core/docs/marketplace-operations.md`.
+
+`npm run build` includes the standalone server's static/public assets; `npm start` runs that production package. Set `HOSTNAME` and `PORT` for the desired listener. Browser checks use a running real coordinator and app: `npm run test:e2e`; set `PLAYWRIGHT_BASE_URL` when the app uses a different port.
+
+The `wallet-contract` checks reproduce the dependency-enum mismatch against an already confirmed public pilot transaction and verify its original hash and signed bytes. They also inject RPC responses to check pending, committed, retry, and rejected-payment behavior without broadcasting that historical transaction. They do not automate a JoyID passkey signature.
+
+The `onboarding-desktop` and `onboarding-mobile` projects additionally require two running, funded Fiber testnet nodes. Set `LIQUIDLANE_LIVE_RECEIVER_CONFIG` and `LIQUIDLANE_LIVE_PROVIDER_CONFIG` to their real connector configurations, and build the Core binaries first. The test starts its own isolated coordinator and authenticates accounts with real native-wallet signatures. It uses the live nodes for pairing, heartbeat balances, and quote signatures, checks automatic public-order settings and both participants' views of the request, then cancels before running another provider cycle. It does not open channels or automate a JoyID passkey or fee signature. These projects skip when live-node configuration is absent. The new local systemd installation and reboot flow needs a separate host check; see `liquidlane-core/docs/automatic-provider-setup.md`.
+
+The original dark landing and console design is restored in `src/app/landing.tsx` and `src/app/console.tsx`. Global styles reuse the original `src/legacy/vault.css`; marketplace adaptations live in `src/marketplace/console.css`. The archived vault business logic is not mounted as a marketplace route. Preserve the archive and old recovery records when migrating an existing deployment.
+
+MIT license. The JoyID/CKB SDK dependency tree retains a low-severity `elliptic` advisory; marketplace quote verification uses Noble and wallet signatures are produced by JoyID. See the Core operations guide for the recorded dependency review and remaining live-wallet validation.

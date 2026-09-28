@@ -12,6 +12,7 @@ import {
   type SignChallengeResponseData,
 } from "@joyid/ckb";
 import { addressToScript, serializeWitnessArgs } from "@nervosnetwork/ckb-sdk-utils";
+import { toRpcTransaction } from "./ckbTransaction";
 
 export type CkbLockScript = {
   code_hash: string;
@@ -497,6 +498,17 @@ export async function broadcastCkbTransaction(tx: CKBTransaction): Promise<strin
   );
 }
 
+export async function ckbTransactionStatus(hash: string): Promise<"unknown" | "pending" | "proposed" | "committed"> {
+  if (!/^0x[0-9a-f]{64}$/i.test(hash)) throw new Error("Invalid payment transaction hash.");
+  const result = await callCkbRpcForTransaction<{ tx_status: { status: string; reason?: string } } | null>(
+    "get_transaction", [hash], undefined, "Payment confirmation",
+  );
+  const status = result === null ? "unknown" : result.tx_status?.status;
+  if (status === "rejected") throw new Error(`The saved payment was rejected by CKB: ${result?.tx_status.reason ?? "inspect the saved transaction"}.`);
+  if (status !== "unknown" && status !== "pending" && status !== "proposed" && status !== "committed") throw new Error("CKB returned an unrecognized payment status.");
+  return status;
+}
+
 type CkbRpcError = {
   code?: number;
   message?: string;
@@ -508,7 +520,7 @@ type CkbRpcResponse<T> = {
   error?: CkbRpcError;
 };
 
-async function callCkbRpcForTransaction<T>(method: string, params: unknown[], tx: CKBTransaction, label: string): Promise<T> {
+async function callCkbRpcForTransaction<T>(method: string, params: unknown[], tx: CKBTransaction | undefined, label: string): Promise<T> {
   if (!ckbRpcURL?.trim()) {
     throw new Error("CKB RPC URL is not configured for supply transactions.");
   }
@@ -525,7 +537,7 @@ async function callCkbRpcForTransaction<T>(method: string, params: unknown[], tx
     });
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      throw new Error(`${label} timed out after ${CKB_RPC_TIMEOUT_MS / 1000} seconds. No transaction was broadcast.`);
+      throw new Error(`${label} timed out after ${CKB_RPC_TIMEOUT_MS / 1000} seconds. Check the saved transaction hash before retrying a payment.`);
     }
     throw error;
   } finally {
@@ -540,7 +552,7 @@ async function callCkbRpcForTransaction<T>(method: string, params: unknown[], tx
   if (body.error) {
     throw new Error(formatCkbRpcError(label, body.error, tx));
   }
-  if (body.result === undefined || body.result === null) {
+  if (body.result === undefined || (body.result === null && method !== "get_transaction")) {
     throw new Error(`${label} returned no result from CKB RPC.`);
   }
   return body.result;
@@ -561,10 +573,10 @@ function assertRpcTransactionReady(tx: CKBTransaction, action: string) {
   }
 }
 
-function formatCkbRpcError(label: string, error: CkbRpcError, tx: CKBTransaction) {
+function formatCkbRpcError(label: string, error: CkbRpcError, tx: CKBTransaction | undefined) {
   const message = error.message?.trim() || "CKB RPC rejected the transaction.";
   const code = error.code === undefined ? "" : ` code=${error.code}.`;
-  const source = rpcSourceHint(message, tx);
+  const source = tx ? rpcSourceHint(message, tx) : "";
   const data = error.data === undefined ? "" : ` Data: ${shortJson(error.data)}`;
   return `${label} rejected the transaction:${code} ${message}${source}${data}`;
 }
@@ -599,48 +611,6 @@ function shortJson(value: unknown) {
   } catch {
     return String(value);
   }
-}
-
-type RpcScript = {
-  code_hash: string;
-  hash_type: string;
-  args: string;
-};
-
-function toRpcTransaction(tx: CKBTransaction) {
-  return {
-    version: tx.version,
-    cell_deps: tx.cellDeps.map((dep) => ({
-      out_point: {
-        tx_hash: dep.outPoint.txHash,
-        index: dep.outPoint.index,
-      },
-      dep_type: dep.depType === "depGroup" ? "dep_group" : dep.depType,
-    })),
-    header_deps: tx.headerDeps,
-    inputs: tx.inputs.map((input) => ({
-      previous_output: {
-        tx_hash: input.previousOutput.txHash,
-        index: input.previousOutput.index,
-      },
-      since: input.since,
-    })),
-    outputs: tx.outputs.map((output) => ({
-      capacity: output.capacity,
-      lock: toRpcScript(output.lock),
-      ...(output.type ? { type: toRpcScript(output.type) } : {}),
-    })),
-    outputs_data: tx.outputsData,
-    witnesses: tx.witnesses,
-  };
-}
-
-function toRpcScript(script: { codeHash: string; hashType: string; args: string }): RpcScript {
-  return {
-    code_hash: script.codeHash,
-    hash_type: script.hashType,
-    args: script.args,
-  };
 }
 
 function cloneTransaction(tx: CKBTransaction): CKBTransaction {
