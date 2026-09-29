@@ -11,7 +11,8 @@ dist/
 
 # env
 .env
-.env*.local
+.env.*
+!.env.example
 
 # logs
 npm-debug.log*
@@ -22,6 +23,10 @@ pnpm-debug.log*
 # misc
 .DS_Store
 *.pem
+*.key
+*.log
+*.bak
+*.swp
 
 # typescript
 *.tsbuildinfo
@@ -30,9 +35,34 @@ next-env.d.ts
 /test-results/
 /playwright-report/
 
-# Local proposals, task lists, and planning notes
-*proposal*.md
-*plan*.md
-*task*.md
-TASKS.md
-/docs/spark-*.md
+# Local planning, agent, and editor state
+/.local-notes/
+/planning/
+/plans/
+/tasks/
+/.codex/
+/.claude/
+/.cursor/
+/.vscode/
+/.idea/
+/.config/
+
+# Only maintained public documentation belongs in the repository
+*.[mM][dD]
+!/README.md
+
+# Keep local configuration out; retain build manifests and test fixtures
+*.json
+*.jsonc
+*.json5
+*.yaml
+*.yml
+!/package.json
+!/package-lock.json
+!/tsconfig.json
+!/.github/workflows/*.yml
+!/.github/workflows/*.yaml
+!/tests/fixtures/**/*.json
+*.local.*
+*.private.*
+*.secret.*
